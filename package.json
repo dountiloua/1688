@@ -1,0 +1,28 @@
+{
+  "name": "1688-dz-sourcing-bot",
+  "version": "0.1.0",
+  "description": "Telegram bot MVP for 1688-to-Algeria B2B sourcing: link intake, DZD pricing, order tracking",
+  "main": "dist/bot.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bot.js",
+    "dev": "ts-node src/bot.ts",
+    "postinstall": "npx playwright install --with-deps chromium || npx playwright install chromium"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.27.0",
+    "playwright": "^1.49.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.2"
+  },
+  "license": "UNLICENSED"
+}
