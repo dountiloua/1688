@@ -17,6 +17,18 @@ export const DEFAULT_FREIGHT_PER_KG_DZD = 5000;
 /** Flat admin benefit added on top of the formula (shown inside the approximate price). */
 export const DEFAULT_BENEFIT_DZD = 2000;
 
+/**
+ * Parcel-weight rounding for freight (admin side).
+ * 2.7 → 3, 2.5 → 3, 2.2 stays 2.2, 2.0 → 2: fractions >= 0.5 round up to the
+ * next whole kilo, smaller fractions are kept as-is (2 decimals max).
+ */
+export function roundWeightKg(w: number): number {
+  if (!Number.isFinite(w) || w <= 0) return 0;
+  const frac = w - Math.floor(w);
+  if (frac >= 0.5) return Math.ceil(w);
+  return Math.round(w * 100) / 100;
+}
+
 /** Legacy (pre-USD) settings keys — kept so old installs still migrate. */
 export const DEFAULT_FX_RATE_RMB_DZD = 38;
 export const DEFAULT_FREIGHT_ESTIMATE_DZD = 1500;

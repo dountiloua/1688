@@ -296,7 +296,8 @@ function dashboardPage(opts: {
         <form class="inline" method="POST" action="/admin/accept">
           <input type="hidden" name="token" value="${esc(token)}" />
           <input type="hidden" name="id" value="${o.id}" />
-          <input name="final" value="${o.approxTotalDzd || o.totalAmountDzd}" inputmode="numeric" style="width:130px" title="Final price DZD" />
+          <input name="final" value="${o.approxTotalDzd || o.totalAmountDzd}" inputmode="numeric" style="width:120px" title="Final product price DZD" />
+          <input name="weight" value="" inputmode="decimal" placeholder="kg (optional)" style="width:100px" title="Parcel weight kg — rounded (2.7→3, 2.2 stays) × per-kg rate" />
           <button type="submit">✅ Accept & invoice</button>
         </form>
       </div>`).join("")}
@@ -434,8 +435,14 @@ async function handle(
     }
     const id = Number(body.get("id"));
     const final = Number(body.get("final"));
+    const weightRaw = (body.get("weight") ?? "").trim();
+    const weight = weightRaw === "" ? 0 : Number(weightRaw);
     if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(final) || final <= 0) {
       redirect(res, token, "Invalid order id or final price.");
+      return;
+    }
+    if (!Number.isFinite(weight) || weight < 0 || weight > 100000) {
+      redirect(res, token, "Invalid weight.");
       return;
     }
     const existing = getOrderById(id);
@@ -447,7 +454,7 @@ async function handle(
       redirect(res, token, `Order #${id} is ${existing.status}, not pending.`);
       return;
     }
-    const updated = acceptOrder(id, final);
+    const updated = acceptOrder(id, final, weight);
     if (updated) {
       try {
         await bot.api.sendMessage(updated.telegramUserId, invoiceMessage(updated));
@@ -455,7 +462,7 @@ async function handle(
         console.error("dashboard invoice notify failed:", notifyErr);
       }
     }
-    redirect(res, token, updated ? `✅ Order #${id} accepted at ${formatDzd(updated.totalAmountDzd)}. Invoice sent.` : `Order #${id} could not be accepted.`, `view=${id}`);
+    redirect(res, token, updated ? `✅ Order #${id} accepted: ${formatDzd(final)}${updated.freightDzd > 0 ? ` + freight ${formatDzd(updated.freightDzd)} (${updated.weightKg} kg)` : " (shipping TBD)"} = ${formatDzd(updated.totalAmountDzd)}. Invoice sent.` : `Order #${id} could not be accepted.`, `view=${id}`);
     return;
   }
 

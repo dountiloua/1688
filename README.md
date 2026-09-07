@@ -72,7 +72,7 @@ npm run dev
 Customer:
 
 - `/start` — welcome (Arabic default, `/lang` for FR/EN)
-- Send a `1688.com` link → preview (RMB price → DZD price + shipping/kg note, no exchange-rate internals) → ✅ confirm → quantity → variant options as tap-buttons when the page declares them (🎨 color → 📏 size → …; per-variant price applied automatically) → weight → name → phone → wilaya → **postal code** → address → **approximate** total (formula + benefit). The admin then locks the **final price** and the customer receives the **invoice** by DM. Deposit is always 10,000 DZD.
+- Send a `1688.com` link → preview (RMB price → DZD price, no exchange-rate internals, no shipping talk) → ✅ confirm → quantity → variant options as tap-buttons when the page declares them (🎨 color → 📏 size → …; per-variant price applied automatically) → name → phone → wilaya → **postal code** → address → **approximate** total (formula + benefit). The admin then locks the **final price** (+ parcel weight → smart-rounded freight) and the customer receives the **invoice** by DM. Deposit is always 10,000 DZD.
 - `/myorders` — order history + status
 - `/cancel` — abort the current flow
 
@@ -103,10 +103,12 @@ total <= 10000 → full payment upfront, else 10000 deposit + remainder
 ```
 
 Two-stage pricing: the bot shows the customer an **approximate** total
-(formula + benefit). New orders start as `PENDING_ACCEPTANCE`. The admin
-locks the **final price** in the panel (prefilled with the approximate) or
-via `/accept <id> <final>` — the customer instantly receives the **invoice**
-DM and the order moves to `AWAITING_DEPOSIT`. Deposit is always 10,000 DZD.
+(formula + benefit, no freight). New orders start as `PENDING_ACCEPTANCE`.
+The admin locks the **final price** in the panel (prefilled with the
+approximate) or via `/accept <id> <final> [weight_kg]` — optional parcel
+weight is smart-rounded (2.7→3, 2.2 stays) and charged at the per-kg rate,
+then the customer instantly receives the **invoice** DM and the order moves
+to `AWAITING_DEPOSIT`. Deposit is always 10,000 DZD.
 
 Two smarts on top of that:
 

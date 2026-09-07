@@ -30,18 +30,14 @@ function extract1688Url(text: string): string | null {
   return null;
 }
 
-function productCaption(
-  p: PendingProduct,
-  freightPerKg: number,
-): string {
-  // Customer sees: RMB price → DZD price → shipping estimate → total later.
-  // Exchange-rate internals (USD leg) stay hidden on purpose.
+function productCaption(p: PendingProduct): string {
+  // Customer sees: RMB price → DZD price. Shipping is decided by the admin
+  // later and never hinted up front; exchange internals stay hidden too.
   const lines = [
     `🧾 ${p.title}`,
     ``,
     `💴 السعر: ${p.priceRmb} RMB`,
     `💰 السعر بالدينار (للقطعة): ${formatDzd(p.unitDzd)}`,
-    `🚚 الشحن التقديري: ${formatDzd(freightPerKg)} لكل 1kg`,
     p.moq !== null ? `📦 أقل كمية للطلب (MOQ): ${p.moq}` : null,
     p.variants.length > 0
       ? `🎨 خيارات متوفرة (اللون / المقاس) — ستختارها بعد التأكيد`
@@ -80,13 +76,6 @@ function askQuantityText(ctx: MyContext): string {
   return q;
 }
 
-function askWeightText(ctx: MyContext): string {
-  return t(ctx.session.lang, "askWeight").replace(
-    "{FREIGHT}",
-    Math.round(getFreightPerKg()).toLocaleString("en-US"),
-  );
-}
-
 /** Unit DZD line for the chosen quantity (tier-aware). Empty when FX is down. */
 async function unitDzdLine(
   pending: PendingProduct,
@@ -107,8 +96,8 @@ async function askCurrentVariant(ctx: MyContext): Promise<void> {
   const pending = ctx.session.pending;
   const opt = pending?.variants[ctx.session.draftVariantIdx];
   if (!pending || !opt) {
-    ctx.session.step = "awaiting_weight";
-    await ctx.reply(askWeightText(ctx));
+    ctx.session.step = "awaiting_name";
+    await ctx.reply(t(ctx.session.lang, "askName"));
     return;
   }
   let msg = askVariantText(ctx.session.lang, opt);
@@ -163,8 +152,8 @@ async function recordVariantPick(
   }
   // All options picked — variant unit price resolves at order time from the
   // quantity tier (ladder), falling back to the matched SKU price.
-  ctx.session.step = "awaiting_weight";
-  await ctx.reply(askWeightText(ctx));
+  ctx.session.step = "awaiting_name";
+  await ctx.reply(t(ctx.session.lang, "askName"));
 }
 
 export function registerCustomerHandlers(bot: Bot<MyContext>): void {
@@ -300,25 +289,9 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             ctx.session.step = "awaiting_variant";
             await askCurrentVariant(ctx);
           } else {
-            ctx.session.step = "awaiting_weight";
-            await ctx.reply(askWeightText(ctx));
+            ctx.session.step = "awaiting_name";
+            await ctx.reply(t(lang, "askName"));
           }
-          return;
-        }
-        case "awaiting_weight": {
-          const normalized = text.replace(/,/g, "").trim();
-          const unknown =
-            normalized === "0" ||
-            normalized === "?" ||
-            /لا\s?أعرف|لا اعرف|unknown|dont know/i.test(normalized);
-          const w = unknown ? 0 : Number(normalized);
-          if (!unknown && (!Number.isFinite(w) || w < 0 || w > 100000)) {
-            await ctx.reply(t(lang, "askWeightInvalid"));
-            return;
-          }
-          ctx.session.draftWeightKg = w;
-          ctx.session.step = "awaiting_name";
-          await ctx.reply(t(lang, "askName"));
           return;
         }
         case "awaiting_name": {
@@ -409,7 +382,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
           const quote = quotePrice({
             priceRmb: unitRmb,
             quantity: qty,
-            weightKg: ctx.session.draftWeightKg,
+            weightKg: 0,
             cnyPerUsd: cny,
             usdRateDzd: usdRate,
             freightPerKgDzd: freightPerKg,
@@ -531,7 +504,6 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         return;
       }
 
-      const freightPerKg = getFreightPerKg();
       // Preview unit for qty=1: ladder tier wins over the scraped lowest.
       const previewUnitRmb =
         tierPriceFor(scraped.tiers, 1) ?? scraped.priceRmb;
@@ -567,7 +539,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         .text("✅ تأكيد الطلب", "product:confirm")
         .text("❌ إلغاء", "product:cancel");
 
-      const caption = productCaption(pending, freightPerKg);
+      const caption = productCaption(pending);
       try {
         if (pending.imageUrl) {
           await ctx.replyWithPhoto(pending.imageUrl, {

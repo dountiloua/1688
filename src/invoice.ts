@@ -12,7 +12,11 @@ export function invoiceMessage(order: OrderRow): string {
     ``,
     `📦 ${order.titleRaw.slice(0, 120)} ×${order.quantity || 1}`,
     order.variantSummary ? `🎨 ${order.variantSummary}` : null,
-    `💰 السعر النهائي: ${formatDzd(order.totalAmountDzd)}`,
+    `💰 السعر النهائي (منتج): ${formatDzd(order.totalAmountDzd - order.freightDzd)}`,
+    order.freightDzd > 0
+      ? `🚚 الشحن (${order.weightKg} kg): ${formatDzd(order.freightDzd)}`
+      : `🚚 الشحن: يحدد لاحقاً`,
+    `💰 المجموع الكلي: ${formatDzd(order.totalAmountDzd)}`,
     order.totalAmountDzd <= MINIMUM_DEPOSIT_DZD
       ? `💳 الدفع الكامل مقدماً: ${formatDzd(order.depositAmountDzd)}`
       : `💳 العربون المطلوب الآن: ${formatDzd(order.depositAmountDzd)}\n💵 الباقي: ${formatDzd(order.remainingBalanceDzd)}`,

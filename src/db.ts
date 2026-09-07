@@ -8,6 +8,7 @@ import {
   DEFAULT_FX_RATE_RMB_DZD,
   DEFAULT_USD_RATE_DZD,
   MINIMUM_DEPOSIT_DZD,
+  roundWeightKg,
 } from "./pricing.js";
 
 export type OrderStatus =
@@ -305,18 +306,28 @@ export function listPendingAcceptance(limit = 50): OrderRow[] {
 }
 
 /**
- * Accept an order: lock the final total, recompute the (always-10000)
- * deposit against it, and move to AWAITING_DEPOSIT for the invoice.
+ * Accept an order: lock the final product price, apply the admin-entered
+ * parcel weight (smart-rounded × per-kg rate) as freight, recompute the
+ * (always-10000) deposit against the all-in total, and move to
+ * AWAITING_DEPOSIT for the invoice. Weight 0/omitted = shipping TBD.
  */
-export function acceptOrder(id: number, finalTotalDzd: number): OrderRow | null {
-  const total = Math.max(0, Math.round(finalTotalDzd));
+export function acceptOrder(
+  id: number,
+  productFinalDzd: number,
+  weightKgRaw?: number,
+): OrderRow | null {
+  const productFinal = Math.max(0, Math.round(productFinalDzd));
+  const weightKg = roundWeightKg(weightKgRaw ?? 0);
+  const freight = Math.round(weightKg * getFreightPerKg());
+  const total = productFinal + freight;
   const deposit = Math.min(total, MINIMUM_DEPOSIT_DZD);
   getDb()
     .prepare(
-      `UPDATE orders SET totalAmountDzd = ?, depositAmountDzd = ?,
+      `UPDATE orders SET weightKg = ?, freightDzd = ?,
+       totalAmountDzd = ?, depositAmountDzd = ?,
        remainingBalanceDzd = ?, status = 'AWAITING_DEPOSIT' WHERE id = ?`,
     )
-    .run(total, deposit, total - deposit, id);
+    .run(weightKg, freight, total, deposit, total - deposit, id);
   return getOrderById(id);
 }
 

@@ -264,7 +264,7 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
             `👤 ${o.fullName} • ${o.phone}`,
             `🧾 ${o.titleRaw.slice(0, 80)} ×${o.quantity || 1}`,
             `💰 Approx ${formatDzd(o.approxTotalDzd || o.totalAmountDzd)}`,
-            `Accept: /accept ${o.id} <final_price_dzd>`,
+            `Accept: /accept ${o.id} <final_price_dzd> [weight_kg]`,
           ].join("\n"),
         );
       }
@@ -279,8 +279,13 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
     const parts = (ctx.message?.text ?? "").split(/\s+/);
     const id = Number(parts[1]);
     const final = Number(parts[2]);
+    const weight = parts[3] !== undefined ? Number(parts[3]) : 0;
     if (!parts[1] || !Number.isInteger(id) || id <= 0 || !Number.isFinite(final) || final <= 0) {
-      await ctx.reply("Usage: /accept <order_id> <final_price_dzd>");
+      await ctx.reply("Usage: /accept <order_id> <final_price_dzd> [weight_kg]\nWeight is optional — smart-rounded (2.7→3, 2.2 stays) × per-kg rate.");
+      return;
+    }
+    if (parts[3] !== undefined && (!Number.isFinite(weight) || weight < 0 || weight > 100000)) {
+      await ctx.reply("Usage: /accept <order_id> <final_price_dzd> [weight_kg]");
       return;
     }
     try {
@@ -293,13 +298,13 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
         await ctx.reply(`Order #${id} is ${order.status}, not pending acceptance.`);
         return;
       }
-      const updated = acceptOrder(id, final);
+      const updated = acceptOrder(id, final, weight);
       if (!updated) {
         await ctx.reply(`❌ Failed to accept order #${id}.`);
         return;
       }
       await ctx.reply(
-        `✅ Order #${id} accepted at ${formatDzd(updated.totalAmountDzd)} (deposit ${formatDzd(updated.depositAmountDzd)}). Invoice sent.`,
+        `✅ Order #${id} accepted: product ${formatDzd(final)}${updated.freightDzd > 0 ? ` + freight ${formatDzd(updated.freightDzd)} (${updated.weightKg} kg)` : " (shipping TBD)"} = ${formatDzd(updated.totalAmountDzd)} (deposit ${formatDzd(updated.depositAmountDzd)}). Invoice sent.`,
       );
       try {
         await ctx.api.sendMessage(updated.telegramUserId, invoiceMessage(updated));
