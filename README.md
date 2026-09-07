@@ -47,8 +47,11 @@ npm run dev
 | `ADMIN_TELEGRAM_ID` | ✅ | — | Telegram user id allowed to run admin commands |
 | `DATABASE_PATH` | — | `./data/orders.db` | SQLite file location |
 | `PORT` | — | `3000` | Health-check HTTP port |
-| `SCRAPER_TIMEOUT_MS` | — | `30000` | Playwright navigation timeout |
-| `SCRAPER_NAV_DELAY_MS` | — | `1500` | Post-load delay + retry backoff base |
+| `ADMIN_PANEL_TOKEN` | ✅ | — | Password for the `/admin` web panel |
+| `SCRAPER_PROVIDER` | — | auto | `oxylabs` / `playwright` / auto |
+| `OXYLABS_USERNAME` / `OXYLABS_PASSWORD` | — | — | Oxylabs Realtime API creds |
+| `USD_RATE_DZD` | — | `255` | Default DZD per 1 USD (DB settings win) |
+| `FREIGHT_PER_KG_DZD` | — | `5000` | Default freight DZD per kg (DB settings win) |
 
 ### 4. Deploy on Railway
 
@@ -69,7 +72,7 @@ npm run dev
 Customer:
 
 - `/start` — welcome (Arabic default, `/lang` for FR/EN)
-- Send a `1688.com` link → preview with DZD price → ✅ confirm → name → phone → wilaya → address
+- Send a `1688.com` link → preview (RMB price → DZD price + shipping/kg note, no exchange-rate internals) → ✅ confirm → quantity → estimated weight (kg, or 0 if unknown) → name → phone → wilaya → address
 - `/myorders` — order history + status
 - `/cancel` — abort the current flow
 
@@ -77,21 +80,58 @@ Admin (`ADMIN_TELEGRAM_ID` only):
 
 - `/orders` — orders with `AWAITING_DEPOSIT`, each with a ✅ button
 - `/order <id>` — full detail incl. `HK Shipping / Mark: ALG-<id>` for the freight partner
-- `/setfx <rate>` — FX rate for new orders (default 38)
-- `/setfreight <amount>` — flat freight estimate for new orders (default 1500)
+- `/setusd <rate>` — DZD per 1 USD for new orders (default 255)
+- `/setcny auto|<rate>` — CNY→USD: live auto rate (free API, cached 12h) or fixed manual rate
+- `/setfreightkg <amount>` — freight DZD per kg for new orders (default 5000)
+- `/rates` — show current pricing inputs
 - `/advance <order_id> <new_status>` — move lifecycle + notify customer
 
 Statuses: `AWAITING_DEPOSIT → DEPOSIT_PAID → FORWARDED_TO_SHIPPING_PARTNER → IN_TRANSIT → DELIVERED` (or `CANCELLED`).
 
-## Pricing
-
-`src/pricing.ts` — do not change the formula:
+## Pricing (`src/pricing.ts` + `src/fx.ts`)
 
 ```text
-productCostDzd = priceRmb * fxRateRmbDzd
-totalAmountDzd = round(productCostDzd * 1.05 * 1.10 + estFreightDzd)
+unitUsd      = priceRmb / cnyPerUsd          # live CNY→USD (free API, 12h cache) or manual
+unitDzd      = round(unitUsd * usdRateDzd)    # default 255 DZD per USD
+productTotal = unitDzd * quantity
+freight      = round(weightKg * 5000)         # per-kg rate, admin-editable
+total        = productTotal + freight
 total <= 10000 → full payment upfront, else 10000 deposit + remainder
 ```
+
+The customer only ever sees: RMB price → DZD price → shipping → total.
+Exchange-rate internals stay hidden; admins control all three inputs from the
+panel (`USD rate`, `CNY→USD auto/fixed`, `Freight/kg`) or via
+`/setusd`, `/setcny`, `/setfreightkg`.
+
+## Admin web panel
+
+Same process, no extra service: open `http://localhost:3000/admin`
+(on Railway: `https://<your-app>.up.railway.app/admin`) and enter your
+`ADMIN_PANEL_TOKEN`. You get:
+
+- **Stats row** — order counts per status at a glance
+- **Pricing settings** — USD rate, CNY→USD (auto/live or fixed), freight/kg (new orders only)
+- **Order list** — newest first, filterable by status, with shipping marks
+- **Order detail** (`View`) — full customer/address/money info plus the
+  `HK Shipping / Mark:` line to copy to the freight partner
+- **Move dropdown** — change any order's status; the customer is notified
+  on Telegram automatically
+
+Health check for Railway lives at `/health` on the same port.
+
+## Scraper providers
+
+- **Oxylabs (default when `OXYLABS_USERNAME` + `OXYLABS_PASSWORD` are set):**
+  paid Realtime API, no browser needed, much more reliable against 1688
+  bot-protection. One 1688 product page = one API query.
+- **Playwright (fallback):** free headless Chromium in `src/scraper/oneSixEightEight.ts`.
+  Needs `npx playwright install chromium` locally; Railway gets it via `postinstall`.
+- Switch explicitly with `SCRAPER_PROVIDER=oxylabs|playwright`.
+  If the primary provider fails, the bot automatically tries the other one once
+  (except for bad links / bad credentials, which fail fast to save API credits).
+- Both providers parse through the shared `src/scraper/parse1688.ts`, so the
+  `scrape1688Product()` interface in `src/scraper/index.ts` stays swappable.
 
 ## Notes / limits
 

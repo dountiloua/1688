@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Bot, session } from "grammy";
-import * as http from "node:http";
 import { getDb } from "./db.js";
+import { startDashboard } from "./dashboard.js";
 import { registerAdminHandlers } from "./handlers/admin.js";
 import { registerCustomerHandlers } from "./handlers/customer.js";
 import { closeScraper } from "./scraper/oneSixEightEight.js";
@@ -46,13 +46,9 @@ async function main(): Promise<void> {
       .catch(() => undefined);
   });
 
-  // Tiny health server for Railway (expects the process to bind $PORT).
+  // Admin web panel (+ /health endpoint) for Railway (expects $PORT bound).
   const port = Number(process.env.PORT ?? 3000);
-  const server = http.createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "text/plain" });
-    res.end("1688-dz bot ok");
-  });
-  server.listen(port, () => console.log(`Health server on :${port}`));
+  const server = startDashboard(bot, port);
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`Received ${signal}, shutting down...`);

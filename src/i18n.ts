@@ -43,6 +43,26 @@ const STRINGS: Dict = {
     fr: "📝 Quel est votre nom complet ?",
     en: "📝 What is your full name?",
   },
+  askQuantity: {
+    ar: "🔢 كم قطعة تريد؟ (أرسل رقماً، مثال: 10)",
+    fr: "🔢 Combien de pièces voulez-vous ? (envoyez un nombre, ex : 10)",
+    en: "🔢 How many pieces do you want? (send a number, e.g. 10)",
+  },
+  askQuantityInvalid: {
+    ar: "❌ أرسل رقماً صحيحاً للكمية (1 على الأقل).",
+    fr: "❌ Envoyez un nombre valide (1 minimum).",
+    en: "❌ Send a valid quantity number (at least 1).",
+  },
+  askWeight: {
+    ar: "⚖️ ما هو الوزن التقديري الإجمالي بالكيلوغرام؟\n🚚 الشحن ≈ {FREIGHT} دج لكل 1kg.\nإذا لا تعرف الوزن، أرسل 0 وسيؤكده المشرف لاحقاً.",
+    fr: "⚖️ Quel est le poids total estimé en kg ?\n🚚 Livraison ≈ {FREIGHT} DZD par 1kg.\nSi vous ne savez pas, envoyez 0.",
+    en: "⚖️ What is the estimated total weight in kg?\n🚚 Shipping ≈ {FREIGHT} DZD per 1kg.\nIf you don't know, send 0.",
+  },
+  askWeightInvalid: {
+    ar: "❌ أرسل الوزن رقماً بالكيلوغرام (مثال: 2.5) أو 0 إذا لا تعرف.",
+    fr: "❌ Envoyez le poids en kg (ex : 2.5) ou 0 si vous ne savez pas.",
+    en: "❌ Send the weight in kg (e.g. 2.5) or 0 if you don't know.",
+  },
   askPhone: {
     ar: "📞 ما هو رقم الهاتف؟",
     fr: "📞 Quel est votre numéro de téléphone ?",

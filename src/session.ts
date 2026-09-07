@@ -4,6 +4,8 @@ export type Lang = "ar" | "fr" | "en";
 
 export type ConversationStep =
   | "idle"
+  | "awaiting_quantity"
+  | "awaiting_weight"
   | "awaiting_name"
   | "awaiting_phone"
   | "awaiting_wilaya"
@@ -15,18 +17,16 @@ export interface PendingProduct {
   priceRmb: number;
   imageUrl: string;
   moq: number | null;
-  fxRate: number;
-  freight: number;
-  total: number;
-  deposit: number;
-  remaining: number;
-  requiresFullPayment: boolean;
+  /** Unit price in DZD previewed for qty=1 (final total computed at order time). */
+  unitDzd: number;
 }
 
 export interface SessionData {
   lang: Lang;
   step: ConversationStep;
   pending: PendingProduct | null;
+  draftQuantity: number;
+  draftWeightKg: number;
   draftName: string;
   draftPhone: string;
   draftWilaya: string;
@@ -39,6 +39,8 @@ export function initialSession(): SessionData {
     lang: "ar",
     step: "idle",
     pending: null,
+    draftQuantity: 1,
+    draftWeightKg: 0,
     draftName: "",
     draftPhone: "",
     draftWilaya: "",

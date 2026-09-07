@@ -3,7 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   DEFAULT_FREIGHT_ESTIMATE_DZD,
+  DEFAULT_FREIGHT_PER_KG_DZD,
   DEFAULT_FX_RATE_RMB_DZD,
+  DEFAULT_USD_RATE_DZD,
 } from "./pricing.js";
 
 export type OrderStatus =
@@ -34,6 +36,11 @@ export interface OrderRow {
   titleRaw: string;
   priceRmb: number;
   fxRateRmbDzd: number;
+  quantity: number;
+  weightKg: number;
+  freightDzd: number;
+  cnyPerUsd: number;
+  usdRateDzd: number;
   totalAmountDzd: number;
   depositAmountDzd: number;
   remainingBalanceDzd: number;
@@ -52,6 +59,11 @@ export interface NewOrder {
   titleRaw: string;
   priceRmb: number;
   fxRateRmbDzd: number;
+  quantity: number;
+  weightKg: number;
+  freightDzd: number;
+  cnyPerUsd: number;
+  usdRateDzd: number;
   totalAmountDzd: number;
   depositAmountDzd: number;
   remainingBalanceDzd: number;
@@ -119,6 +131,40 @@ function migrate(database: Database.Database): void {
       String(DEFAULT_FREIGHT_ESTIMATE_DZD),
     );
   }
+  // USD-based pricing settings
+  if (!getSetting.get("usd_rate_dzd")) {
+    setSetting.run("usd_rate_dzd", String(DEFAULT_USD_RATE_DZD));
+  }
+  if (!getSetting.get("freight_per_kg_dzd")) {
+    setSetting.run(
+      "freight_per_kg_dzd",
+      String(DEFAULT_FREIGHT_PER_KG_DZD),
+    );
+  }
+  if (!getSetting.get("cny_per_usd_mode")) {
+    setSetting.run("cny_per_usd_mode", "auto");
+  }
+
+  // Order columns for quantity / weight-based freight (added after v1)
+  const cols = database
+    .prepare("PRAGMA table_info(orders)")
+    .all() as { name: string }[];
+  const hasCol = (n: string): boolean => cols.some((c) => c.name === n);
+  if (!hasCol("quantity")) {
+    database.exec("ALTER TABLE orders ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!hasCol("weightKg")) {
+    database.exec("ALTER TABLE orders ADD COLUMN weightKg REAL NOT NULL DEFAULT 0");
+  }
+  if (!hasCol("freightDzd")) {
+    database.exec("ALTER TABLE orders ADD COLUMN freightDzd INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!hasCol("cnyPerUsd")) {
+    database.exec("ALTER TABLE orders ADD COLUMN cnyPerUsd REAL NOT NULL DEFAULT 0");
+  }
+  if (!hasCol("usdRateDzd")) {
+    database.exec("ALTER TABLE orders ADD COLUMN usdRateDzd REAL NOT NULL DEFAULT 0");
+  }
 }
 
 export function getSetting(key: string): string | null {
@@ -142,6 +188,20 @@ export function getFxRate(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_FX_RATE_RMB_DZD;
 }
 
+/** DZD per 1 USD (default 255). Applies to new orders only. */
+export function getUsdRate(): number {
+  const raw = getSetting("usd_rate_dzd");
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_USD_RATE_DZD;
+}
+
+/** Estimated freight in DZD per kg (default 5000). Applies to new orders only. */
+export function getFreightPerKg(): number {
+  const raw = getSetting("freight_per_kg_dzd");
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FREIGHT_PER_KG_DZD;
+}
+
 export function getFreightEstimate(): number {
   const raw = getSetting("freight_estimate_dzd");
   const n = raw ? Number(raw) : NaN;
@@ -160,11 +220,13 @@ export function createOrder(input: NewOrder): OrderRow {
     INSERT INTO orders (
       telegramUserId, fullName, phone, wilaya, address,
       productUrl, titleRaw, priceRmb, fxRateRmbDzd,
+      quantity, weightKg, freightDzd, cnyPerUsd, usdRateDzd,
       totalAmountDzd, depositAmountDzd, remainingBalanceDzd,
       shippingMark, status
     ) VALUES (
       @telegramUserId, @fullName, @phone, @wilaya, @address,
       @productUrl, @titleRaw, @priceRmb, @fxRateRmbDzd,
+      @quantity, @weightKg, @freightDzd, @cnyPerUsd, @usdRateDzd,
       @totalAmountDzd, @depositAmountDzd, @remainingBalanceDzd,
       '', @status
     )
@@ -193,6 +255,32 @@ export function listAwaitingDeposit(limit = 20): OrderRow[] {
       "SELECT * FROM orders WHERE status = 'AWAITING_DEPOSIT' ORDER BY id DESC LIMIT ?",
     )
     .all(limit) as OrderRow[];
+}
+
+/** All orders, newest first, optionally filtered by status (for the dashboard). */
+export function listOrders(status?: OrderStatus, limit = 200): OrderRow[] {
+  if (status && isValidStatus(status)) {
+    return getDb()
+      .prepare("SELECT * FROM orders WHERE status = ? ORDER BY id DESC LIMIT ?")
+      .all(status, limit) as OrderRow[];
+  }
+  return getDb()
+    .prepare("SELECT * FROM orders ORDER BY id DESC LIMIT ?")
+    .all(limit) as OrderRow[];
+}
+
+/** Order counts per status (for the dashboard stats row). */
+export function countByStatus(): Record<OrderStatus, number> {
+  const rows = getDb()
+    .prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status")
+    .all() as { status: string; n: number }[];
+  const out = Object.fromEntries(
+    ORDER_STATUSES.map((s) => [s, 0]),
+  ) as Record<OrderStatus, number>;
+  for (const r of rows) {
+    if (isValidStatus(r.status)) out[r.status] = r.n;
+  }
+  return out;
 }
 
 export function listOrdersByUser(

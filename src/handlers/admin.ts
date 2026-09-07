@@ -1,14 +1,15 @@
 import { Bot, InlineKeyboard } from "grammy";
 import {
-  getFreightEstimate,
-  getFxRate,
+  getFreightPerKg,
   getOrderById,
+  getUsdRate,
   isValidStatus,
   listAwaitingDeposit,
   setSetting,
   updateOrderStatus,
   type OrderStatus,
 } from "../db.js";
+import { getCnyMode, getCnyPerUsd } from "../fx.js";
 import { formatDzd } from "../i18n.js";
 import type { MyContext } from "../session.js";
 
@@ -47,7 +48,7 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
             `#${o.id} • ${o.shippingMark || "no mark yet"}`,
             `👤 ${o.fullName} • ${o.phone}`,
             `📍 ${o.wilaya}`,
-            `🧾 ${o.titleRaw.slice(0, 80)}`,
+            `🧾 ${o.titleRaw.slice(0, 80)} ×${o.quantity || 1}`,
             `💰 ${formatDzd(o.totalAmountDzd)} (deposit ${formatDzd(o.depositAmountDzd)})`,
             `🔗 ${o.productUrl}`,
           ].join("\n"),
@@ -110,8 +111,11 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
           `🧾 Order #${o.id} • ${o.status}`,
           `👤 ${o.fullName} • ${o.phone}`,
           `📍 ${o.wilaya} — ${o.address}`,
-          `🧾 ${o.titleRaw}`,
-          `💴 ${o.priceRmb} RMB @ ${o.fxRateRmbDzd} DZD`,
+          `🧾 ${o.titleRaw} ×${o.quantity || 1}`,
+          `💴 ${o.priceRmb} RMB / unit`,
+          o.weightKg > 0
+            ? `⚖️ ${o.weightKg} kg → freight ${formatDzd(o.freightDzd)}`
+            : `⚖️ Weight unknown → freight TBD`,
           `💰 Total ${formatDzd(o.totalAmountDzd)} • Deposit ${formatDzd(o.depositAmountDzd)} • Rest ${formatDzd(o.remainingBalanceDzd)}`,
           `HK Shipping / Mark: ${o.shippingMark}`,
           `🔗 ${o.productUrl}`,
@@ -124,45 +128,94 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
     }
   });
 
-  bot.command("setfx", async (ctx) => {
+  bot.command("setusd", async (ctx) => {
     if (!(await requireAdmin(ctx))) return;
     const arg = ctx.message?.text.split(/\s+/)[1];
     const rate = Number(arg);
-    if (!arg || !Number.isFinite(rate) || rate <= 0 || rate > 1000) {
+    if (!arg || !Number.isFinite(rate) || rate <= 0 || rate > 10000) {
       await ctx.reply(
-        `Usage: /setfx <rate>\nCurrent: ${getFxRate()} DZD per 1 CNY (new orders only).`,
+        `Usage: /setusd <rate_dzd_per_usd>\nCurrent: ${getUsdRate()} DZD per 1 USD (new orders only).`,
       );
       return;
     }
     try {
-      setSetting("fx_rate_rmb_dzd", String(rate));
+      setSetting("usd_rate_dzd", String(rate));
       await ctx.reply(
-        `✅ FX rate updated to ${rate} DZD/CNY for new orders. Existing orders unchanged.`,
+        `✅ USD rate updated to ${rate} DZD/USD for new orders. Existing orders unchanged.`,
       );
     } catch (err) {
-      console.error("/setfx failed:", err);
-      await ctx.reply("❌ Failed to update FX rate.");
+      console.error("/setusd failed:", err);
+      await ctx.reply("❌ Failed to update USD rate.");
     }
   });
 
-  bot.command("setfreight", async (ctx) => {
+  bot.command("setcny", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const arg = (ctx.message?.text.split(/\s+/)[1] ?? "").toLowerCase();
+    try {
+      if (arg === "auto") {
+        setSetting("cny_per_usd_mode", "auto");
+        const live = await getCnyPerUsd();
+        await ctx.reply(
+          `✅ CNY→USD back to AUTO (live: ${live.rate.toFixed(4)} CNY per USD, cached 12h).`,
+        );
+        return;
+      }
+      const rate = Number(arg);
+      if (!arg || !Number.isFinite(rate) || rate < 5 || rate > 12) {
+        const cur = await getCnyPerUsd().catch(() => null);
+        await ctx.reply(
+          `Usage: /setcny auto | /setcny <rate_cny_per_usd>\nMode: ${getCnyMode()}${cur ? ` • current: ${cur.rate.toFixed(4)} (${cur.source})` : ""}`,
+        );
+        return;
+      }
+      setSetting("cny_per_usd_mode", "manual");
+      setSetting("cny_per_usd_manual", String(rate));
+      await ctx.reply(
+        `✅ CNY→USD set manually to ${rate} (panel + bot use this until you /setcny auto).`,
+      );
+    } catch (err) {
+      console.error("/setcny failed:", err);
+      await ctx.reply("❌ Failed to update CNY rate.");
+    }
+  });
+
+  bot.command("setfreightkg", async (ctx) => {
     if (!(await requireAdmin(ctx))) return;
     const arg = ctx.message?.text.split(/\s+/)[1];
     const amount = Number(arg);
     if (!arg || !Number.isFinite(amount) || amount < 0 || amount > 10000000) {
       await ctx.reply(
-        `Usage: /setfreight <amount_dzd>\nCurrent: ${formatDzd(getFreightEstimate())} (new orders only).`,
+        `Usage: /setfreightkg <amount_dzd_per_kg>\nCurrent: ${formatDzd(getFreightPerKg())} / kg (new orders only).`,
       );
       return;
     }
     try {
-      setSetting("freight_estimate_dzd", String(Math.round(amount)));
+      setSetting("freight_per_kg_dzd", String(Math.round(amount)));
       await ctx.reply(
-        `✅ Freight estimate updated to ${formatDzd(amount)} for new orders.`,
+        `✅ Freight updated to ${formatDzd(amount)} per kg for new orders.`,
       );
     } catch (err) {
-      console.error("/setfreight failed:", err);
-      await ctx.reply("❌ Failed to update freight estimate.");
+      console.error("/setfreightkg failed:", err);
+      await ctx.reply("❌ Failed to update freight rate.");
+    }
+  });
+
+  bot.command("rates", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    try {
+      const cny = await getCnyPerUsd();
+      await ctx.reply(
+        [
+          `💱 Current pricing inputs (new orders):`,
+          `• CNY→USD: ${cny.rate.toFixed(4)} (${cny.source}, mode ${getCnyMode()})`,
+          `• USD→DZD: ${getUsdRate()}`,
+          `• Freight: ${formatDzd(getFreightPerKg())} / kg`,
+        ].join("\n"),
+      );
+    } catch (err) {
+      console.error("/rates failed:", err);
+      await ctx.reply("❌ Could not load rates.");
     }
   });
 

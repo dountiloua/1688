@@ -1,16 +1,17 @@
 import { Bot, InlineKeyboard } from "grammy";
 import {
   createOrder,
-  getFreightEstimate,
-  getFxRate,
+  getFreightPerKg,
+  getUsdRate,
   listOrdersByUser,
 } from "../db.js";
+import { getCnyPerUsd } from "../fx.js";
 import { formatDzd, t } from "../i18n.js";
 import {
   is1688Url,
   Product1688ScrapeError,
   scrape1688Product,
-} from "../scraper/oneSixEightEight.js";
+} from "../scraper/index.js";
 import { quotePrice } from "../pricing.js";
 import type { MyContext, PendingProduct } from "../session.js";
 
@@ -26,18 +27,19 @@ function extract1688Url(text: string): string | null {
   return null;
 }
 
-function productCaption(p: PendingProduct): string {
+function productCaption(
+  p: PendingProduct,
+  freightPerKg: number,
+): string {
+  // Customer sees: RMB price → DZD price → shipping estimate → total later.
+  // Exchange-rate internals (USD leg) stay hidden on purpose.
   const lines = [
     `🧾 ${p.title}`,
     ``,
     `💴 السعر: ${p.priceRmb} RMB`,
-    `💰 الإجمالي التقريبي: ${formatDzd(p.total)}`,
-    `   (سعر الصرف: ${p.fxRate} دج / ¥ • شحن تقديري: ${formatDzd(p.freight)})`,
+    `💰 السعر بالدينار (للقطعة): ${formatDzd(p.unitDzd)}`,
+    `🚚 الشحن التقديري: ${formatDzd(freightPerKg)} لكل 1kg`,
     p.moq !== null ? `📦 أقل كمية للطلب (MOQ): ${p.moq}` : null,
-    ``,
-    p.requiresFullPayment
-      ? `💳 الدفع المسبق الكامل مطلوب الآن: ${formatDzd(p.deposit)}`
-      : `💳 العربون المطلوب الآن: ${formatDzd(p.deposit)}\n💵 الباقي لاحقاً: ${formatDzd(p.remaining)}`,
     ``,
     `🔗 ${p.url}`,
   ].filter((l): l is string => l !== null);
@@ -85,7 +87,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
       }
       const lines = orders.map(
         (o) =>
-          `#${o.id} • ${o.status}\n${o.titleRaw.slice(0, 60)}\n${formatDzd(o.totalAmountDzd)} • ${o.shippingMark}`,
+          `#${o.id} • ${o.status}\n${o.titleRaw.slice(0, 60)} ×${o.quantity || 1}\n${formatDzd(o.totalAmountDzd)} • ${o.shippingMark}`,
       );
       await ctx.reply(`📦 طلباتك:\n\n${lines.join("\n\n")}`);
     } catch (err) {
@@ -98,12 +100,17 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
   bot.callbackQuery("product:confirm", async (ctx) => {
     try {
       await ctx.answerCallbackQuery();
-      if (!ctx.session.pending) {
+      const pending = ctx.session.pending;
+      if (!pending) {
         await ctx.reply(t(ctx.session.lang, "sessionExpired"));
         return;
       }
-      ctx.session.step = "awaiting_name";
-      await ctx.reply(t(ctx.session.lang, "askName"));
+      ctx.session.step = "awaiting_quantity";
+      let q = t(ctx.session.lang, "askQuantity");
+      if (pending.moq !== null && pending.moq > 1) {
+        q += `\n📦 أقل كمية للطلب (MOQ): ${pending.moq}`;
+      }
+      await ctx.reply(q);
     } catch (err) {
       console.error("confirm failed:", err);
       await ctx.reply("❌ حدث خطأ. حاول مجدداً.");
@@ -128,6 +135,42 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
     try {
       // --- In-progress order conversation ---
       switch (ctx.session.step) {
+        case "awaiting_quantity": {
+          const qty = Math.floor(Number(text.replace(/,/g, "")));
+          const moq = ctx.session.pending?.moq ?? null;
+          const minQty = moq !== null && moq > 1 ? moq : 1;
+          if (!Number.isFinite(qty) || qty < minQty || qty > 1000000) {
+            let msg = t(lang, "askQuantityInvalid");
+            if (minQty > 1) msg += ` (أقل كمية: ${minQty})`;
+            await ctx.reply(msg);
+            return;
+          }
+          ctx.session.draftQuantity = qty;
+          ctx.session.step = "awaiting_weight";
+          await ctx.reply(
+            t(lang, "askWeight").replace(
+              "{FREIGHT}",
+              Math.round(getFreightPerKg()).toLocaleString("en-US"),
+            ),
+          );
+          return;
+        }
+        case "awaiting_weight": {
+          const normalized = text.replace(/,/g, "").trim();
+          const unknown =
+            normalized === "0" ||
+            normalized === "?" ||
+            /لا\s?أعرف|لا اعرف|unknown|dont know/i.test(normalized);
+          const w = unknown ? 0 : Number(normalized);
+          if (!unknown && (!Number.isFinite(w) || w < 0 || w > 100000)) {
+            await ctx.reply(t(lang, "askWeightInvalid"));
+            return;
+          }
+          ctx.session.draftWeightKg = w;
+          ctx.session.step = "awaiting_name";
+          await ctx.reply(t(lang, "askName"));
+          return;
+        }
         case "awaiting_name": {
           if (text.length < 2) {
             await ctx.reply(t(lang, "askName"));
@@ -175,6 +218,27 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             await ctx.reply("❌ تعذر تحديد هويتك. أرسل /start وحاول مجدداً.");
             return;
           }
+          let cny: number;
+          try {
+            cny = (await getCnyPerUsd()).rate;
+          } catch (fxErr) {
+            console.error("FX unavailable at order time:", fxErr);
+            ctx.session.step = "idle";
+            await ctx.reply(
+              "❌ تعذر حساب السعر حالياً (سعر الصرف غير متوفر). حاول مجدداً بعد قليل.",
+            );
+            return;
+          }
+          const usdRate = getUsdRate();
+          const freightPerKg = getFreightPerKg();
+          const quote = quotePrice({
+            priceRmb: pending.priceRmb,
+            quantity: ctx.session.draftQuantity,
+            weightKg: ctx.session.draftWeightKg,
+            cnyPerUsd: cny,
+            usdRateDzd: usdRate,
+            freightPerKgDzd: freightPerKg,
+          });
           const order = createOrder({
             telegramUserId,
             fullName: ctx.session.draftName,
@@ -184,27 +248,43 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             productUrl: pending.url,
             titleRaw: pending.title,
             priceRmb: pending.priceRmb,
-            fxRateRmbDzd: pending.fxRate,
-            totalAmountDzd: pending.total,
-            depositAmountDzd: pending.deposit,
-            remainingBalanceDzd: pending.remaining,
+            // Effective RMB→DZD rate actually charged (USD leg stays hidden).
+            fxRateRmbDzd: usdRate / cny,
+            quantity: quote.quantity,
+            weightKg: quote.weightKg,
+            freightDzd: quote.freightDzd,
+            cnyPerUsd: cny,
+            usdRateDzd: usdRate,
+            totalAmountDzd: quote.totalAmountDzd,
+            depositAmountDzd: quote.depositAmountDzd,
+            remainingBalanceDzd: quote.remainingBalanceDzd,
             status: "AWAITING_DEPOSIT",
           });
 
           ctx.session.step = "idle";
           ctx.session.pending = null;
+          ctx.session.draftQuantity = 1;
+          ctx.session.draftWeightKg = 0;
           ctx.session.draftName = "";
           ctx.session.draftPhone = "";
           ctx.session.draftWilaya = "";
+
+          const shippingLine =
+            quote.weightKg > 0
+              ? `🚚 الشحن التقديري (${quote.weightKg} kg): ${formatDzd(quote.freightDzd)}`
+              : `🚚 الشحن: سيؤكده المشرف (الوزن غير معروف)`;
 
           await ctx.reply(
             [
               `${t(lang, "orderReceived")}`,
               ``,
-              `🧾 طلب #${order.id}`,
+              `🧾 طلب #${order.id} ×${quote.quantity}`,
               `📦 ${order.titleRaw.slice(0, 120)}`,
-              `💰 الإجمالي: ${formatDzd(order.totalAmountDzd)}`,
-              pending.requiresFullPayment
+              `💴 سعر القطعة: ${pending.priceRmb} RMB ≈ ${formatDzd(quote.unitPriceDzd)}`,
+              `📦 مجموع المنتج (${quote.quantity}): ${formatDzd(quote.productTotalDzd)}`,
+              shippingLine,
+              `💰 المجموع الإجمالي: ${formatDzd(order.totalAmountDzd)}`,
+              quote.requiresFullPaymentUpfront
                 ? `💳 الدفع المسبق الكامل: ${formatDzd(order.depositAmountDzd)}`
                 : `💳 العربون: ${formatDzd(order.depositAmountDzd)} • الباقي: ${formatDzd(order.remainingBalanceDzd)}`,
               `🏷️ Shipping Mark: ${order.shippingMark}`,
@@ -259,13 +339,20 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         return;
       }
 
-      const fxRate = getFxRate();
-      const freight = getFreightEstimate();
-      const quote = quotePrice({
-        priceRmb: scraped.priceRmb,
-        fxRateRmbDzd: fxRate,
-        estFreightDzd: freight,
-      });
+      const freightPerKg = getFreightPerKg();
+      let unitDzd: number;
+      try {
+        const cny = await getCnyPerUsd();
+        unitDzd = Math.round(
+          (scraped.priceRmb / cny.rate) * getUsdRate(),
+        );
+      } catch (fxErr) {
+        console.warn("FX unavailable for preview:", fxErr);
+        await ctx.reply(
+          "❌ تعذر حساب السعر حالياً (سعر الصرف غير متوفر). حاول مجدداً بعد قليل.",
+        );
+        return;
+      }
 
       const pending: PendingProduct = {
         url: scraped.url,
@@ -273,12 +360,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         priceRmb: scraped.priceRmb,
         imageUrl: scraped.imageUrl,
         moq: scraped.moq,
-        fxRate,
-        freight,
-        total: quote.totalAmountDzd,
-        deposit: quote.depositAmountDzd,
-        remaining: quote.remainingBalanceDzd,
-        requiresFullPayment: quote.requiresFullPaymentUpfront,
+        unitDzd,
       };
       ctx.session.pending = pending;
 
@@ -286,7 +368,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         .text("✅ تأكيد الطلب", "product:confirm")
         .text("❌ إلغاء", "product:cancel");
 
-      const caption = productCaption(pending);
+      const caption = productCaption(pending, freightPerKg);
       try {
         if (pending.imageUrl) {
           await ctx.replyWithPhoto(pending.imageUrl, {
