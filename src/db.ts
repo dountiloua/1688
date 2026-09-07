@@ -35,6 +35,7 @@ export interface OrderRow {
   productUrl: string;
   titleRaw: string;
   priceRmb: number;
+  variantSummary: string;
   fxRateRmbDzd: number;
   quantity: number;
   weightKg: number;
@@ -58,6 +59,7 @@ export interface NewOrder {
   productUrl: string;
   titleRaw: string;
   priceRmb: number;
+  variantSummary: string;
   fxRateRmbDzd: number;
   quantity: number;
   weightKg: number;
@@ -165,6 +167,9 @@ function migrate(database: Database.Database): void {
   if (!hasCol("usdRateDzd")) {
     database.exec("ALTER TABLE orders ADD COLUMN usdRateDzd REAL NOT NULL DEFAULT 0");
   }
+  if (!hasCol("variantSummary")) {
+    database.exec("ALTER TABLE orders ADD COLUMN variantSummary TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export function getSetting(key: string): string | null {
@@ -219,13 +224,13 @@ export function createOrder(input: NewOrder): OrderRow {
   const stmt = database.prepare(`
     INSERT INTO orders (
       telegramUserId, fullName, phone, wilaya, address,
-      productUrl, titleRaw, priceRmb, fxRateRmbDzd,
+      productUrl, titleRaw, priceRmb, variantSummary, fxRateRmbDzd,
       quantity, weightKg, freightDzd, cnyPerUsd, usdRateDzd,
       totalAmountDzd, depositAmountDzd, remainingBalanceDzd,
       shippingMark, status
     ) VALUES (
       @telegramUserId, @fullName, @phone, @wilaya, @address,
-      @productUrl, @titleRaw, @priceRmb, @fxRateRmbDzd,
+      @productUrl, @titleRaw, @priceRmb, @variantSummary, @fxRateRmbDzd,
       @quantity, @weightKg, @freightDzd, @cnyPerUsd, @usdRateDzd,
       @totalAmountDzd, @depositAmountDzd, @remainingBalanceDzd,
       '', @status

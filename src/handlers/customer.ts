@@ -7,13 +7,14 @@ import {
 } from "../db.js";
 import { getCnyPerUsd } from "../fx.js";
 import { formatDzd, t } from "../i18n.js";
+import { priceForSelection, tierPriceFor, type VariantOption } from "../scraper/parse1688.js";
 import {
   is1688Url,
   Product1688ScrapeError,
   scrape1688Product,
 } from "../scraper/index.js";
 import { quotePrice } from "../pricing.js";
-import type { MyContext, PendingProduct } from "../session.js";
+import type { Lang, MyContext, PendingProduct } from "../session.js";
 
 const URL_RE = /https?:\/\/[^\s]+/gi;
 
@@ -40,10 +41,124 @@ function productCaption(
     `💰 السعر بالدينار (للقطعة): ${formatDzd(p.unitDzd)}`,
     `🚚 الشحن التقديري: ${formatDzd(freightPerKg)} لكل 1kg`,
     p.moq !== null ? `📦 أقل كمية للطلب (MOQ): ${p.moq}` : null,
+    p.variants.length > 0
+      ? `🎨 خيارات متوفرة (اللون / المقاس) — ستختارها بعد التأكيد`
+      : null,
     ``,
     `🔗 ${p.url}`,
   ].filter((l): l is string => l !== null);
   return lines.join("\n");
+}
+
+function askVariantText(lang: Lang, opt: VariantOption): string {
+  if (opt.kind === "color") return t(lang, "askVariantColor");
+  if (opt.kind === "size") return t(lang, "askVariantSize");
+  return t(lang, "askVariantOther").replace("{NAME}", opt.name);
+}
+
+function variantKeyboard(opt: VariantOption, optIdx: number): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  opt.values.forEach((v, vi) => {
+    kb.text(v.slice(0, 40), `v:${optIdx}:${vi}`);
+    if (vi % 2 === 1) kb.row();
+  });
+  return kb;
+}
+
+function askQuantityText(ctx: MyContext): string {
+  let q = t(ctx.session.lang, "askQuantity");
+  const moq = ctx.session.pending?.moq ?? null;
+  if (moq !== null && moq > 1) {
+    q += `\n📦 أقل كمية للطلب (MOQ): ${moq}`;
+  }
+  return q;
+}
+
+function askWeightText(ctx: MyContext): string {
+  return t(ctx.session.lang, "askWeight").replace(
+    "{FREIGHT}",
+    Math.round(getFreightPerKg()).toLocaleString("en-US"),
+  );
+}
+
+/** Unit DZD line for the chosen quantity (tier-aware). Empty when FX is down. */
+async function unitDzdLine(
+  pending: PendingProduct,
+  qty: number,
+): Promise<string> {
+  const unitRmb =
+    tierPriceFor(pending.tiers, qty) ?? pending.resolvedPriceRmb;
+  try {
+    const cny = await getCnyPerUsd();
+    const dzd = Math.round((unitRmb / cny.rate) * getUsdRate());
+    return `💴 سعر القطعة للكمية ${qty} ≈ ${formatDzd(dzd)}`;
+  } catch {
+    return "";
+  }
+}
+
+async function askCurrentVariant(ctx: MyContext): Promise<void> {
+  const pending = ctx.session.pending;
+  const opt = pending?.variants[ctx.session.draftVariantIdx];
+  if (!pending || !opt) {
+    ctx.session.step = "awaiting_weight";
+    await ctx.reply(askWeightText(ctx));
+    return;
+  }
+  let msg = askVariantText(ctx.session.lang, opt);
+  const line = await unitDzdLine(pending, ctx.session.draftQuantity);
+  if (line) msg += `\n${line}`;
+  await ctx.reply(msg, {
+    reply_markup: variantKeyboard(opt, ctx.session.draftVariantIdx),
+  });
+}
+
+/** Prefer exact matches, then substring matches. */
+function matchVariantValue(opt: VariantOption, raw: string): string | null {
+  const n = raw.trim().toLowerCase();
+  if (!n) return null;
+  const exact = opt.values.find((v) => v.toLowerCase() === n);
+  if (exact) return exact;
+  return (
+    opt.values.find((v) => {
+      const lv = v.toLowerCase();
+      return lv.includes(n) || n.includes(lv);
+    }) ?? null
+  );
+}
+
+async function recordVariantPick(
+  ctx: MyContext,
+  rawValue: string,
+): Promise<void> {
+  const pending = ctx.session.pending;
+  if (!pending) {
+    ctx.session.step = "idle";
+    await ctx.reply(t(ctx.session.lang, "sessionExpired"));
+    return;
+  }
+  const opt = pending.variants[ctx.session.draftVariantIdx];
+  if (!opt) {
+    ctx.session.step = "awaiting_quantity";
+    await ctx.reply(askQuantityText(ctx));
+    return;
+  }
+  const match = matchVariantValue(opt, rawValue);
+  if (!match) {
+    await ctx.reply(t(ctx.session.lang, "variantInvalid"));
+    await askCurrentVariant(ctx);
+    return;
+  }
+  ctx.session.draftPicks.push({ name: opt.name, value: match });
+  ctx.session.draftVariantIdx += 1;
+  if (ctx.session.draftVariantIdx < pending.variants.length) {
+    await askCurrentVariant(ctx);
+    return;
+  }
+  // All options picked — variant unit price resolves at order time from the
+  // quantity tier (ladder), falling back to the matched SKU price.
+  ctx.session.step = "awaiting_weight";
+  await ctx.reply(askWeightText(ctx));
 }
 
 export function registerCustomerHandlers(bot: Bot<MyContext>): void {
@@ -105,14 +220,38 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         await ctx.reply(t(ctx.session.lang, "sessionExpired"));
         return;
       }
+      ctx.session.draftVariantIdx = 0;
+      ctx.session.draftPicks = [];
+      ctx.session.draftQuantity = 1;
+      // Quantity first (drives the tier price), then variants, then weight.
       ctx.session.step = "awaiting_quantity";
-      let q = t(ctx.session.lang, "askQuantity");
-      if (pending.moq !== null && pending.moq > 1) {
-        q += `\n📦 أقل كمية للطلب (MOQ): ${pending.moq}`;
-      }
-      await ctx.reply(q);
+      await ctx.reply(askQuantityText(ctx));
     } catch (err) {
       console.error("confirm failed:", err);
+      await ctx.reply("❌ حدث خطأ. حاول مجدداً.");
+    }
+  });
+
+  // Variant option buttons: v:<optionIdx>:<valueIdx>
+  bot.callbackQuery(/^v:(\d+):(\d+)$/, async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      if (ctx.session.step !== "awaiting_variant" || !ctx.session.pending) {
+        await ctx.reply(t(ctx.session.lang, "sessionExpired"));
+        return;
+      }
+      const optIdx = Number(ctx.match[1]);
+      const valIdx = Number(ctx.match[2]);
+      if (optIdx !== ctx.session.draftVariantIdx) return; // stale button
+      const opt = ctx.session.pending.variants[optIdx];
+      const value = opt?.values[valIdx];
+      if (!value) {
+        await ctx.reply(t(ctx.session.lang, "variantInvalid"));
+        return;
+      }
+      await recordVariantPick(ctx, value);
+    } catch (err) {
+      console.error("variant pick failed:", err);
       await ctx.reply("❌ حدث خطأ. حاول مجدداً.");
     }
   });
@@ -135,6 +274,10 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
     try {
       // --- In-progress order conversation ---
       switch (ctx.session.step) {
+        case "awaiting_variant": {
+          await recordVariantPick(ctx, text);
+          return;
+        }
         case "awaiting_quantity": {
           const qty = Math.floor(Number(text.replace(/,/g, "")));
           const moq = ctx.session.pending?.moq ?? null;
@@ -146,13 +289,14 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             return;
           }
           ctx.session.draftQuantity = qty;
-          ctx.session.step = "awaiting_weight";
-          await ctx.reply(
-            t(lang, "askWeight").replace(
-              "{FREIGHT}",
-              Math.round(getFreightPerKg()).toLocaleString("en-US"),
-            ),
-          );
+          const pendingNow = ctx.session.pending;
+          if (pendingNow && pendingNow.variants.length > 0) {
+            ctx.session.step = "awaiting_variant";
+            await askCurrentVariant(ctx);
+          } else {
+            ctx.session.step = "awaiting_weight";
+            await ctx.reply(askWeightText(ctx));
+          }
           return;
         }
         case "awaiting_weight": {
@@ -231,14 +375,25 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
           }
           const usdRate = getUsdRate();
           const freightPerKg = getFreightPerKg();
+          const qty = ctx.session.draftQuantity;
+          // Unit price: quantity-tier ladder wins (real 1688 wholesale price
+          // for this qty), then matched-SKU price, then scraped lowest.
+          const unitRmb =
+            tierPriceFor(pending.tiers, qty) ??
+            priceForSelection(pending.skus, ctx.session.draftPicks) ??
+            pending.priceRmb;
           const quote = quotePrice({
-            priceRmb: pending.priceRmb,
-            quantity: ctx.session.draftQuantity,
+            priceRmb: unitRmb,
+            quantity: qty,
             weightKg: ctx.session.draftWeightKg,
             cnyPerUsd: cny,
             usdRateDzd: usdRate,
             freightPerKgDzd: freightPerKg,
           });
+          const variantSummary = ctx.session.draftPicks
+            .map((p) => p.value)
+            .join(" / ")
+            .slice(0, 200);
           const order = createOrder({
             telegramUserId,
             fullName: ctx.session.draftName,
@@ -247,7 +402,8 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             address: text.slice(0, 500),
             productUrl: pending.url,
             titleRaw: pending.title,
-            priceRmb: pending.priceRmb,
+            priceRmb: unitRmb,
+            variantSummary,
             // Effective RMB→DZD rate actually charged (USD leg stays hidden).
             fxRateRmbDzd: usdRate / cny,
             quantity: quote.quantity,
@@ -263,6 +419,8 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
 
           ctx.session.step = "idle";
           ctx.session.pending = null;
+          ctx.session.draftVariantIdx = 0;
+          ctx.session.draftPicks = [];
           ctx.session.draftQuantity = 1;
           ctx.session.draftWeightKg = 0;
           ctx.session.draftName = "";
@@ -280,7 +438,8 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
               ``,
               `🧾 طلب #${order.id} ×${quote.quantity}`,
               `📦 ${order.titleRaw.slice(0, 120)}`,
-              `💴 سعر القطعة: ${pending.priceRmb} RMB ≈ ${formatDzd(quote.unitPriceDzd)}`,
+              order.variantSummary ? `🎨 النوع: ${order.variantSummary}` : null,
+              `💴 سعر القطعة: ${unitRmb} RMB ≈ ${formatDzd(quote.unitPriceDzd)}`,
               `📦 مجموع المنتج (${quote.quantity}): ${formatDzd(quote.productTotalDzd)}`,
               shippingLine,
               `💰 المجموع الإجمالي: ${formatDzd(order.totalAmountDzd)}`,
@@ -340,11 +499,14 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
       }
 
       const freightPerKg = getFreightPerKg();
+      // Preview unit for qty=1: ladder tier wins over the scraped lowest.
+      const previewUnitRmb =
+        tierPriceFor(scraped.tiers, 1) ?? scraped.priceRmb;
       let unitDzd: number;
       try {
         const cny = await getCnyPerUsd();
         unitDzd = Math.round(
-          (scraped.priceRmb / cny.rate) * getUsdRate(),
+          (previewUnitRmb / cny.rate) * getUsdRate(),
         );
       } catch (fxErr) {
         console.warn("FX unavailable for preview:", fxErr);
@@ -361,6 +523,10 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         imageUrl: scraped.imageUrl,
         moq: scraped.moq,
         unitDzd,
+        variants: scraped.variants,
+        skus: scraped.skus,
+        tiers: scraped.tiers,
+        resolvedPriceRmb: previewUnitRmb,
       };
       ctx.session.pending = pending;
 

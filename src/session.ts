@@ -1,9 +1,11 @@
+import type { PriceTier, SkuEntry, VariantOption } from "./scraper/parse1688.js";
 import type { Context, SessionFlavor } from "grammy";
 
 export type Lang = "ar" | "fr" | "en";
 
 export type ConversationStep =
   | "idle"
+  | "awaiting_variant"
   | "awaiting_quantity"
   | "awaiting_weight"
   | "awaiting_name"
@@ -19,12 +21,19 @@ export interface PendingProduct {
   moq: number | null;
   /** Unit price in DZD previewed for qty=1 (final total computed at order time). */
   unitDzd: number;
+  variants: VariantOption[];
+  skus: SkuEntry[];
+  tiers: PriceTier[];
+  /** Unit RMB after variant selection (defaults to priceRmb). */
+  resolvedPriceRmb: number;
 }
 
 export interface SessionData {
   lang: Lang;
   step: ConversationStep;
   pending: PendingProduct | null;
+  draftVariantIdx: number;
+  draftPicks: { name: string; value: string }[];
   draftQuantity: number;
   draftWeightKg: number;
   draftName: string;
@@ -39,6 +48,8 @@ export function initialSession(): SessionData {
     lang: "ar",
     step: "idle",
     pending: null,
+    draftVariantIdx: 0,
+    draftPicks: [],
     draftQuantity: 1,
     draftWeightKg: 0,
     draftName: "",

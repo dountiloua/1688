@@ -8,12 +8,21 @@
  * and reimplement the internals behind that interface.
  */
 import { chromium, type Browser } from "playwright";
+import {
+  extractVariants,
+  type PriceTier,
+  type SkuEntry,
+  type VariantOption,
+} from "./parse1688.js";
 
 export interface Scraped1688Product {
   title: string;
   priceRmb: number;
   imageUrl: string;
   moq: number | null;
+  variants: VariantOption[];
+  skus: SkuEntry[];
+  tiers: PriceTier[];
   url: string;
 }
 
@@ -249,7 +258,22 @@ async function scrapeOnce(
 
     const moq = data.moqText ? parseMoq(data.moqText) : null;
 
-    return { title: data.title.slice(0, 500), priceRmb, imageUrl, moq, url };
+    // Variants come from the shared HTML parser (same as the API path).
+    // Optional: never fail a scrape because of them.
+    let variants: VariantOption[] = [];
+    let skus: SkuEntry[] = [];
+    let tiers: PriceTier[] = [];
+    try {
+      const html = await page.content();
+      const v = extractVariants(html);
+      variants = v.options;
+      skus = v.skus;
+      tiers = v.tiers;
+    } catch {
+      // ignore
+    }
+
+    return { title: data.title.slice(0, 500), priceRmb, imageUrl, moq, variants, skus, tiers, url };
   } catch (err) {
     if (err instanceof Product1688ScrapeError) throw err;
     throw new Product1688ScrapeError(

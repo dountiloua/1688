@@ -99,7 +99,7 @@ function orderDetailCard(order: OrderRow, token: string): string {
     <table style="border-collapse:collapse;width:100%;font-size:14px">
       <tr><td style="padding:4px 8px;color:#6b7280">Customer</td><td style="padding:4px 8px"><b>${esc(order.fullName)}</b> • ${esc(order.phone)}</td></tr>
       <tr><td style="padding:4px 8px;color:#6b7280">Delivery</td><td style="padding:4px 8px">${esc(order.wilaya)} — ${esc(order.address)}</td></tr>
-      <tr><td style="padding:4px 8px;color:#6b7280">Product</td><td style="padding:4px 8px">${esc(order.titleRaw)} ×${order.quantity || 1}<br/><a href="${esc(order.productUrl)}" target="_blank" rel="noreferrer">1688 link</a></td></tr>
+      <tr><td style="padding:4px 8px;color:#6b7280">Product</td><td style="padding:4px 8px">${esc(order.titleRaw)} ×${order.quantity || 1}${order.variantSummary ? `<br/>🎨 ${esc(order.variantSummary)}` : ""}<br/><a href="${esc(order.productUrl)}" target="_blank" rel="noreferrer">1688 link</a></td></tr>
       <tr><td style="padding:4px 8px;color:#6b7280">Price</td><td style="padding:4px 8px">${esc(String(order.priceRmb))} RMB / unit${order.cnyPerUsd ? ` • ${esc(String(order.cnyPerUsd))} ¥/$ • ${esc(String(order.usdRateDzd))} DZD/$` : ""}</td></tr>
       <tr><td style="padding:4px 8px;color:#6b7280">Freight</td><td style="padding:4px 8px">${order.weightKg > 0 ? `${esc(String(order.weightKg))} kg → ${esc(formatDzd(order.freightDzd))}` : "unknown → TBD by admin"}</td></tr>
       <tr><td style="padding:4px 8px;color:#6b7280">Money</td><td style="padding:4px 8px">Total <b>${esc(formatDzd(order.totalAmountDzd))}</b> • Deposit ${esc(formatDzd(order.depositAmountDzd))} • Rest ${esc(formatDzd(order.remainingBalanceDzd))}</td></tr>

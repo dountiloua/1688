@@ -112,6 +112,7 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
           `👤 ${o.fullName} • ${o.phone}`,
           `📍 ${o.wilaya} — ${o.address}`,
           `🧾 ${o.titleRaw} ×${o.quantity || 1}`,
+          o.variantSummary ? `🎨 ${o.variantSummary}` : null,
           `💴 ${o.priceRmb} RMB / unit`,
           o.weightKg > 0
             ? `⚖️ ${o.weightKg} kg → freight ${formatDzd(o.freightDzd)}`

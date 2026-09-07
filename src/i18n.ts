@@ -63,6 +63,26 @@ const STRINGS: Dict = {
     fr: "❌ Envoyez le poids en kg (ex : 2.5) ou 0 si vous ne savez pas.",
     en: "❌ Send the weight in kg (e.g. 2.5) or 0 if you don't know.",
   },
+  askVariantColor: {
+    ar: "🎨 اختر اللون: (اضغط زراً أو اكتب القيمة)",
+    fr: "🎨 Choisissez la couleur : (touchez un bouton ou écrivez la valeur)",
+    en: "🎨 Choose the color: (tap a button or type the value)",
+  },
+  askVariantSize: {
+    ar: "📏 اختر المقاس: (اضغط زراً أو اكتب القيمة)",
+    fr: "📏 Choisissez la taille : (touchez un bouton ou écrivez la valeur)",
+    en: "📏 Choose the size: (tap a button or type the value)",
+  },
+  askVariantOther: {
+    ar: "⚙️ اختر {NAME}: (اضغط زراً أو اكتب القيمة)",
+    fr: "⚙️ Choisissez {NAME} : (touchez un bouton ou écrivez la valeur)",
+    en: "⚙️ Choose {NAME}: (tap a button or type the value)",
+  },
+  variantInvalid: {
+    ar: "❌ اختر من الخيارات المعروضة (زر أو كتابة دقيقة للقيمة).",
+    fr: "❌ Choisissez parmi les options affichées.",
+    en: "❌ Please pick from the options shown.",
+  },
   askPhone: {
     ar: "📞 ما هو رقم الهاتف؟",
     fr: "📞 Quel est votre numéro de téléphone ?",

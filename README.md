@@ -72,7 +72,7 @@ npm run dev
 Customer:
 
 - `/start` — welcome (Arabic default, `/lang` for FR/EN)
-- Send a `1688.com` link → preview (RMB price → DZD price + shipping/kg note, no exchange-rate internals) → ✅ confirm → quantity → estimated weight (kg, or 0 if unknown) → name → phone → wilaya → address
+- Send a `1688.com` link → preview (RMB price → DZD price + shipping/kg note, no exchange-rate internals) → ✅ confirm → variant options as tap-buttons when the page declares them (🎨 color → 📏 size → …; per-variant price applied automatically) → quantity → estimated weight (kg, or 0 if unknown) → name → phone → wilaya → address
 - `/myorders` — order history + status
 - `/cancel` — abort the current flow
 
@@ -98,6 +98,15 @@ freight      = round(weightKg * 5000)         # per-kg rate, admin-editable
 total        = productTotal + freight
 total <= 10000 → full payment upfront, else 10000 deposit + remainder
 ```
+
+Two smarts on top of that:
+
+- **Quantity ladder** — 1688 wholesale prices drop with quantity
+  (`currentPrices` on the page). The unit charged is the ladder tier for the
+  customer's quantity, not the page's lowest teaser price.
+- **Variants** — color/size/model optionsdeclared on the page become
+  tap-buttons (🎨 → 📏 → …); picks are stored on the order and the variant
+  price applies when SKUs say so.
 
 The customer only ever sees: RMB price → DZD price → shipping → total.
 Exchange-rate internals stay hidden; admins control all three inputs from the
