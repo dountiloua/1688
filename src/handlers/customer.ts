@@ -316,9 +316,10 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         await ctx.reply(t(ctx.session.lang, "noOrders"));
         return;
       }
-      const lines = orders.map(
-        (o) =>
-          `#${o.id} • ${o.status}\n${o.titleRaw.slice(0, 60)} ×${o.quantity || 1}\n${formatDzd(o.totalAmountDzd)} • ${o.shippingMark}`,
+      const lines = orders.map((o) =>
+        o.status === "PENDING_ACCEPTANCE"
+          ? `#${o.id} • قيد مراجعة المشرف ⏳\n${o.titleRaw.slice(0, 60)} ×${o.quantity || 1}\n${o.shippingMark}`
+          : `#${o.id} • ${o.status}\n${o.titleRaw.slice(0, 60)} ×${o.quantity || 1}\n${formatDzd(o.totalAmountDzd)} • ${o.shippingMark}`,
       );
       await ctx.reply(`📦 طلباتك:\n\n${lines.join("\n\n")}`);
     } catch (err) {
@@ -634,7 +635,6 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
               `💴 سعر القطعة: ${unitRmb} RMB ≈ ${formatDzd(quote.unitPriceDzd)}`,
               `📦 مجموع المنتج (${quote.quantity}): ${formatDzd(quote.productTotalDzd)}`,
               shippingLine,
-              `💰 المجموع التقريبي: ${formatDzd(order.totalAmountDzd)}`,
               `⏳ السعر النهائي وطريقة الدفع يحددهما المشرف لاحقاً`,
               `🏷️ Shipping Mark: ${order.shippingMark}`,
               `📌 الحالة: قيد مراجعة المشرف ⏳`,
