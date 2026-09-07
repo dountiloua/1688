@@ -144,6 +144,19 @@ async function scrapeOnce(
 
   const page = await context.newPage();
   try {
+    // Speed: we parse text/JSON only — images, fonts and media just slow us down.
+    // (Aborting requests does NOT remove <img src> attributes from the DOM,
+    // so image extraction keeps working.)
+    // Speed: we parse text/JSON only — images, fonts and media just slow us down.
+    // (Aborting requests does NOT remove <img src> attributes from the DOM,
+    // so image extraction keeps working.)
+    await page.route("**/*", (route) => {
+      const rt = route.request().resourceType();
+      if (rt === "image" || rt === "media" || rt === "font") {
+        return route.abort();
+      }
+      return route.continue();
+    });
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     await sleep(navDelayMs);
     // Let price widgets hydrate

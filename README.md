@@ -117,19 +117,24 @@ Same process, no extra service: open `http://localhost:3000/admin`
   `HK Shipping / Mark:` line to copy to the freight partner
 - **Move dropdown** — change any order's status; the customer is notified
   on Telegram automatically
+- **🗑️ delete** — per-row trash icon (or in the detail card), with a
+  two-step confirmation; deletions are permanent
 
 Health check for Railway lives at `/health` on the same port.
 
-## Scraper providers
+## Scraper providers (local-first)
 
-- **Oxylabs (default when `OXYLABS_USERNAME` + `OXYLABS_PASSWORD` are set):**
-  paid Realtime API, no browser needed, much more reliable against 1688
-  bot-protection. One 1688 product page = one API query.
-- **Playwright (fallback):** free headless Chromium in `src/scraper/oneSixEightEight.ts`.
-  Needs `npx playwright install chromium` locally; Railway gets it via `postinstall`.
-- Switch explicitly with `SCRAPER_PROVIDER=oxylabs|playwright`.
-  If the primary provider fails, the bot automatically tries the other one once
-  (except for bad links / bad credentials, which fail fast to save API credits).
+- **Local (primary):** headless Chromium in `src/scraper/oneSixEightEight.ts`
+  (title, price ladder → lowest tier, image, MOQ — same fields as the
+  `cn-1688-scraper` approach). Images/fonts/media requests are blocked for
+  speed. Needs `npx playwright install chromium` locally; Railway gets it
+  via `postinstall`.
+- **Oxylabs API (fallback):** paid Realtime API for when 1688 blocks the
+  local browser. One 1688 product page = one API query.
+- Order via `SCRAPER_ORDER`: `local,api` (default) | `api,local` | `local`
+  (never spend API credits) | `api` (never launch a browser).
+- The local attempt races `LOCAL_TIMEOUT_MS` (default 45s) so Telegram users
+  get fast answers — a stuck page fails over to the API instead of hanging.
 - Both providers parse through the shared `src/scraper/parse1688.ts`, so the
   `scrape1688Product()` interface in `src/scraper/index.ts` stays swappable.
 

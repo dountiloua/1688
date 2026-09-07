@@ -302,6 +302,12 @@ export function updateOrderStatus(
   return getOrderById(id);
 }
 
+/** Permanently delete an order (admin panel). Returns true if one was removed. */
+export function deleteOrder(id: number): boolean {
+  const info = getDb().prepare("DELETE FROM orders WHERE id = ?").run(id);
+  return info.changes === 1;
+}
+
 export function isValidStatus(value: string): value is OrderStatus {
   return (ORDER_STATUSES as string[]).includes(value);
 }

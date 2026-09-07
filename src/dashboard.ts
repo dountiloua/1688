@@ -12,6 +12,7 @@ import * as http from "node:http";
 import type { Bot } from "grammy";
 import {
   countByStatus,
+  deleteOrder,
   getFreightPerKg,
   getOrderById,
   getUsdRate,
@@ -105,6 +106,21 @@ function orderDetailCard(order: OrderRow, token: string): string {
       <tr><td style="padding:4px 8px;color:#6b7280">Shipping mark</td><td style="padding:4px 8px"><code style="background:#f3f4f6;padding:2px 8px;border-radius:6px">HK Shipping / Mark: ${esc(order.shippingMark)}</code></td></tr>
     </table>
     <div style="margin-top:10px">${advanceForm(order, token)}</div>
+    <div style="margin-top:8px"><a href="/admin?token=${esc(token)}&delete=${order.id}" style="color:#b91c1c;font-size:13px">🗑️ Delete this order…</a></div>
+  </div>`;
+}
+
+function deleteConfirmCard(order: OrderRow, token: string): string {
+  return `<div style="border:2px solid #b91c1c;border-radius:10px;padding:16px;margin:16px 0;background:#fef2f2">
+    <h2 style="margin:0 0 4px;color:#b91c1c">🗑️ Delete order #${order.id}?</h2>
+    <p style="margin:0 0 12px;font-size:14px">${esc(order.titleRaw.slice(0, 100))} ×${order.quantity || 1} • <b>${esc(formatDzd(order.totalAmountDzd))}</b> • ${statusBadge(order.status)}<br/>This is permanent and cannot be undone.</p>
+    <form method="POST" action="/admin/delete" style="display:inline;margin:0">
+      <input type="hidden" name="token" value="${esc(token)}" />
+      <input type="hidden" name="id" value="${order.id}" />
+      <input type="hidden" name="confirm" value="yes" />
+      <button type="submit" style="padding:7px 16px;background:#b91c1c;color:#fff;border:0;border-radius:6px;cursor:pointer">Yes, delete permanently</button>
+    </form>
+    &nbsp;<a href="/admin?token=${esc(token)}&view=${order.id}">Cancel</a>
   </div>`;
 }
 
@@ -118,9 +134,10 @@ function dashboardPage(opts: {
   cnyMode: string;
   activeStatus: string;
   view: OrderRow | null;
+  deleteTarget: OrderRow | null;
   notice: string;
 }): string {
-  const { token, orders, counts, usdRate, freightPerKg, cny, cnyMode, activeStatus, view, notice } =
+  const { token, orders, counts, usdRate, freightPerKg, cny, cnyMode, activeStatus, view, deleteTarget, notice } =
     opts;
   const totalOrders = Object.values(counts).reduce((a, b) => a + b, 0);
 
@@ -140,7 +157,7 @@ function dashboardPage(opts: {
       <td style="padding:8px;max-width:280px">${esc(o.titleRaw.slice(0, 80))} ×${o.quantity || 1}<br/><code style="font-size:11px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(o.shippingMark)}</code></td>
       <td style="padding:8px;white-space:nowrap">${esc(formatDzd(o.totalAmountDzd))}<br/><span style="font-size:12px;color:#6b7280">dep. ${esc(formatDzd(o.depositAmountDzd))}</span></td>
       <td style="padding:8px">${statusBadge(o.status)}</td>
-      <td style="padding:8px;white-space:nowrap"><a href="/admin?token=${esc(token)}&status=${esc(activeStatus)}&view=${o.id}">View</a> &nbsp; ${advanceForm(o, token)}</td>
+      <td style="padding:8px;white-space:nowrap"><a href="/admin?token=${esc(token)}&status=${esc(activeStatus)}&view=${o.id}">View</a> &nbsp; ${advanceForm(o, token)} &nbsp; <a href="/admin?token=${esc(token)}&status=${esc(activeStatus)}&delete=${o.id}" style="color:#b91c1c" title="Delete order">🗑️</a></td>
     </tr>`,
     )
     .join("");
@@ -167,7 +184,8 @@ function dashboardPage(opts: {
       <p style="font-size:12px;color:#6b7280;margin:8px 0 0">CNY→USD now: <b>${cny ? esc(cny.rate.toFixed(4)) : "unavailable"}</b>${cny ? ` (${esc(cny.source)}${cny.updatedAt ? `, ${esc(cny.updatedAt.slice(0, 16).replace("T", " "))}` : ""})` : ""} • mode: <b>${esc(cnyMode)}</b></p>
     </div>
     <div style="margin-bottom:12px;font-size:13px;display:flex;gap:8px;flex-wrap:wrap">${filterLinks}</div>
-    ${view ? orderDetailCard(view, token) : ""}
+    ${deleteTarget ? deleteConfirmCard(deleteTarget, token) : ""}
+    ${view && (!deleteTarget || deleteTarget.id !== view.id) ? orderDetailCard(view, token) : ""}
     <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow-x:auto">
     <table style="border-collapse:collapse;width:100%;font-size:14px">
       <thead><tr style="text-align:left;color:#6b7280;font-size:12px;text-transform:uppercase">
@@ -311,6 +329,29 @@ async function handle(
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/admin/delete") {
+    const body = await parseBody(req);
+    const token = body.get("token") ?? "";
+    if (!isAuthorized(token)) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("forbidden");
+      return;
+    }
+    const id = Number(body.get("id"));
+    if (!Number.isInteger(id) || id <= 0 || body.get("confirm") !== "yes") {
+      redirect(res, token, "Delete not confirmed — nothing removed.");
+      return;
+    }
+    const existing = getOrderById(id);
+    if (!existing) {
+      redirect(res, token, `Order #${body.get("id")} not found.`);
+      return;
+    }
+    const ok = deleteOrder(id);
+    redirect(res, token, ok ? `🗑️ Order #${id} permanently deleted.` : `Order #${id} could not be deleted.`);
+    return;
+  }
+
   // --- Dashboard page ---
   if (url.pathname === "/admin") {
     const token = url.searchParams.get("token") ?? "";
@@ -332,6 +373,9 @@ async function handle(
     const viewId = Number(url.searchParams.get("view"));
     const view =
       Number.isInteger(viewId) && viewId > 0 ? getOrderById(viewId) : null;
+    const deleteId = Number(url.searchParams.get("delete"));
+    const deleteTarget =
+      Number.isInteger(deleteId) && deleteId > 0 ? getOrderById(deleteId) : null;
     let cny: CnyRate | null = null;
     try {
       cny = await getCnyPerUsd();
@@ -351,6 +395,7 @@ async function handle(
         cnyMode: getCnyMode(),
         activeStatus,
         view,
+        deleteTarget,
         notice: url.searchParams.get("notice") ?? "",
       }),
     );
