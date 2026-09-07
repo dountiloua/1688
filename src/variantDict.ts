@@ -130,8 +130,14 @@ export function translateVariant(
 
 /** Translate a full picks list for customer-facing messages. */
 export function translatePicks(
-  picks: { name: string; value: string }[],
+  picks: { name: string; value: string; qty?: number }[],
   lang: Lang,
 ): string {
-  return picks.map((p) => translateVariant(p.value, lang)).join(" / ");
+  return picks
+    .map((p) =>
+      p.qty !== undefined && p.qty > 1
+        ? `${translateVariant(p.value, lang)}×${p.qty}`
+        : translateVariant(p.value, lang),
+    )
+    .join(" / ");
 }

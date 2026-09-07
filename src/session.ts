@@ -34,7 +34,11 @@ export interface SessionData {
   step: ConversationStep;
   pending: PendingProduct | null;
   draftVariantIdx: number;
-  draftPicks: { name: string; value: string }[];
+  draftPicks: { name: string; value: string; qty: number }[];
+  /** Live allocation for the current option: value → pieces (sums to draftQuantity). */
+  draftAlloc: Record<string, number>;
+  /** Message id of the live allocation keyboard (for typed-input re-render). */
+  draftAllocMsgId: number | null;
   draftQuantity: number;
   draftWeightKg: number;
   draftName: string;
@@ -52,6 +56,8 @@ export function initialSession(): SessionData {
     pending: null,
     draftVariantIdx: 0,
     draftPicks: [],
+    draftAlloc: {},
+    draftAllocMsgId: null,
     draftQuantity: 1,
     draftWeightKg: 0,
     draftName: "",

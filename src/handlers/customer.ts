@@ -8,7 +8,7 @@ import {
 } from "../db.js";
 import { getCnyPerUsd } from "../fx.js";
 import { formatDzd, t } from "../i18n.js";
-import { priceForSelection, tierPriceFor, type VariantOption } from "../scraper/parse1688.js";
+import { tierPriceFor, type SkuEntry, type VariantOption } from "../scraper/parse1688.js";
 import { translatePicks, translateVariant } from "../variantDict.js";
 import {
   is1688Url,
@@ -48,23 +48,107 @@ function productCaption(p: PendingProduct): string {
   return lines.join("\n");
 }
 
-function askVariantText(lang: Lang, opt: VariantOption): string {
-  if (opt.kind === "color") return t(lang, "askVariantColor");
-  if (opt.kind === "size") return t(lang, "askVariantSize");
-  return t(lang, "askVariantOther").replace("{NAME}", opt.name);
+function kindWord(lang: Lang, opt: VariantOption): string {
+  if (opt.kind === "color")
+    return lang === "ar" ? "🎨 اللون" : lang === "fr" ? "🎨 Couleur" : "🎨 Color";
+  if (opt.kind === "size")
+    return lang === "ar" ? "📏 المقاس" : lang === "fr" ? "📏 Taille" : "📏 Size";
+  return `⚙️ ${opt.name}`;
 }
 
-function variantKeyboard(
-  opt: VariantOption,
-  optIdx: number,
-  lang: Lang,
-): InlineKeyboard {
+function allocExample(opt: VariantOption, lang: Lang): string {
+  const sep = lang === "ar" ? "، " : ", ";
+  const parts: string[] = [];
+  if (opt.values[0]) parts.push(`${translateVariant(opt.values[0], lang)} 1`);
+  if (opt.values[1]) parts.push(`${translateVariant(opt.values[1], lang)} 2`);
+  return parts.join(sep);
+}
+
+function allocSum(alloc: Record<string, number>): number {
+  return Object.values(alloc).reduce(
+    (a, b) => a + (Number.isFinite(b) ? b : 0),
+    0,
+  );
+}
+
+function emptyAlloc(opt: VariantOption): Record<string, number> {
+  return Object.fromEntries(opt.values.map((v) => [v, 0]));
+}
+
+async function allocText(ctx: MyContext, opt: VariantOption): Promise<string> {
+  const lang = ctx.session.lang;
+  const n = ctx.session.draftQuantity;
+  let msg = t(lang, "askVariantAlloc")
+    .replace("{N}", String(n))
+    .replace("{OPT}", `${kindWord(lang, opt)} (${opt.name})`)
+    .replace("{EX}", allocExample(opt, lang))
+    .replace("{SUM}", String(allocSum(ctx.session.draftAlloc)));
+  const line = await unitDzdLine(ctx.session.pending, n);
+  if (line) msg += `\n${line}`;
+  return msg;
+}
+
+function allocKeyboard(ctx: MyContext, optIdx: number): InlineKeyboard {
   const kb = new InlineKeyboard();
+  const pending = ctx.session.pending;
+  const opt = pending?.variants[optIdx];
+  if (!opt) return kb;
+  const lang = ctx.session.lang;
+  const n = ctx.session.draftQuantity;
   opt.values.forEach((v, vi) => {
-    kb.text(translateVariant(v, lang).slice(0, 40), `v:${optIdx}:${vi}`);
-    if (vi % 2 === 1) kb.row();
+    const count = ctx.session.draftAlloc[v] ?? 0;
+    kb.text("−", `vq:${optIdx}:${vi}:-`)
+      .text(
+        `${translateVariant(v, lang).slice(0, 26)} ×${count}`,
+        `vq:${optIdx}:${vi}:+`,
+      )
+      .text("+", `vq:${optIdx}:${vi}:+`);
+    kb.row();
   });
+  kb.text(
+    `${t(lang, "variantDone")} (${allocSum(ctx.session.draftAlloc)}/${n})`,
+    `vqdone:${optIdx}`,
+  );
   return kb;
+}
+
+/** Send (or re-target) the allocation question for the current option. */
+async function sendAllocMessage(ctx: MyContext): Promise<void> {
+  const pending = ctx.session.pending;
+  const opt = pending?.variants[ctx.session.draftVariantIdx];
+  if (!pending || !opt) {
+    ctx.session.step = "awaiting_name";
+    await ctx.reply(t(ctx.session.lang, "askName"));
+    return;
+  }
+  ctx.session.draftAlloc = emptyAlloc(opt);
+  const sent = await ctx.reply(await allocText(ctx, opt), {
+    reply_markup: allocKeyboard(ctx, ctx.session.draftVariantIdx),
+  });
+  ctx.session.draftAllocMsgId = sent.message_id;
+}
+
+/** Re-render the live allocation keyboard after a tap / typed input. */
+async function refreshAllocMessage(
+  ctx: MyContext,
+  messageId?: number,
+): Promise<void> {
+  const pending = ctx.session.pending;
+  const opt = pending?.variants[ctx.session.draftVariantIdx];
+  if (!pending || !opt) return;
+  const text = await allocText(ctx, opt);
+  const markup = allocKeyboard(ctx, ctx.session.draftVariantIdx);
+  try {
+    if (messageId !== undefined && ctx.chat) {
+      await ctx.api.editMessageText(ctx.chat.id, messageId, text, {
+        reply_markup: markup,
+      });
+    } else {
+      await ctx.editMessageText(text, { reply_markup: markup });
+    }
+  } catch {
+    // Message not modified or too old — harmless, the numbers are in sync.
+  }
 }
 
 function askQuantityText(ctx: MyContext): string {
@@ -78,9 +162,10 @@ function askQuantityText(ctx: MyContext): string {
 
 /** Unit DZD line for the chosen quantity (tier-aware). Empty when FX is down. */
 async function unitDzdLine(
-  pending: PendingProduct,
+  pending: PendingProduct | null,
   qty: number,
 ): Promise<string> {
+  if (!pending) return "";
   const unitRmb =
     tierPriceFor(pending.tiers, qty) ?? pending.resolvedPriceRmb;
   try {
@@ -92,40 +177,86 @@ async function unitDzdLine(
   }
 }
 
-async function askCurrentVariant(ctx: MyContext): Promise<void> {
-  const pending = ctx.session.pending;
-  const opt = pending?.variants[ctx.session.draftVariantIdx];
-  if (!pending || !opt) {
-    ctx.session.step = "awaiting_name";
-    await ctx.reply(t(ctx.session.lang, "askName"));
-    return;
-  }
-  let msg = askVariantText(ctx.session.lang, opt);
-  const line = await unitDzdLine(pending, ctx.session.draftQuantity);
-  if (line) msg += `\n${line}`;
-  await ctx.reply(msg, {
-    reply_markup: variantKeyboard(opt, ctx.session.draftVariantIdx, ctx.session.lang),
-  });
-}
-
-/** Prefer exact matches, then substring matches. */
-function matchVariantValue(opt: VariantOption, raw: string): string | null {
-  const n = raw.trim().toLowerCase();
-  if (!n) return null;
-  const exact = opt.values.find((v) => v.toLowerCase() === n);
-  if (exact) return exact;
-  return (
-    opt.values.find((v) => {
-      const lv = v.toLowerCase();
-      return lv.includes(n) || n.includes(lv);
-    }) ?? null
+/** Highest SKU price touching ANY picked pair (size premiums etc.). */
+function maxSkuPrice(
+  skus: SkuEntry[],
+  picks: { name: string; value: string }[],
+): number | null {
+  if (picks.length === 0 || skus.length === 0) return null;
+  const norm = (s: string): string => s.trim().toLowerCase();
+  const hit = skus.filter((s) =>
+    picks.some((p) =>
+      s.specs.some(
+        (spec) => norm(spec.name) === norm(p.name) && norm(spec.value) === norm(p.value),
+      ),
+    ),
   );
+  if (hit.length === 0) return null;
+  return Math.max(...hit.map((s) => s.price));
 }
 
-async function recordVariantPick(
-  ctx: MyContext,
-  rawValue: string,
-): Promise<void> {
+/**
+ * Parse typed allocation like "white 2, green 1" / "أبيض 1، أخضر 2" /
+ * "40 2 41 1" into value→qty. Returns null when anything doesn't match.
+ */
+export function parseAllocation(
+  text: string,
+  opt: VariantOption,
+): Record<string, number> | null {
+  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
+  const norm = text
+    .replace(/[٠-٩]/g, (d) => String(arabicDigits.indexOf(d)))
+    .replace(/[،;；]/g, ",");
+  // Alias per value: original + ar/fr/en dictionary translations.
+  // Leftmost-longest match wins, so "Black1 2" never parses as Black.
+  const aliases: { value: string; pattern: string }[] = [];
+  for (const v of opt.values) {
+    const names = new Set([
+      v,
+      translateVariant(v, "ar"),
+      translateVariant(v, "fr"),
+      translateVariant(v, "en"),
+    ]);
+    for (const a of names) {
+      const trimmed = a.trim();
+      if (trimmed) aliases.push({ value: v, pattern: trimmed });
+    }
+  }
+  aliases.sort((a, b) => b.pattern.length - a.pattern.length);
+  const alloc = emptyAlloc(opt);
+  let pos = 0;
+  let matchedAny = false;
+  while (pos < norm.length) {
+    if (/[\s,]/.test(norm[pos])) {
+      pos++;
+      continue;
+    }
+    let consumed = false;
+    for (const a of aliases) {
+      if (
+        norm.slice(pos, pos + a.pattern.length).toLowerCase() !==
+        a.pattern.toLowerCase()
+      ) {
+        continue;
+      }
+      const tail = norm.slice(pos + a.pattern.length);
+      const tailMatch = tail.match(/^\s*[x×]?\s*(\d+)/);
+      if (!tailMatch) continue;
+      const qty = Number(tailMatch[1]);
+      if (qty <= 0 || qty > 1000000) return null;
+      alloc[a.value] = (alloc[a.value] ?? 0) + qty;
+      pos += a.pattern.length + tailMatch[0].length;
+      matchedAny = true;
+      consumed = true;
+      break;
+    }
+    if (!consumed) return null;
+  }
+  return matchedAny ? alloc : null;
+}
+
+/** Lock the current option's allocation into picks, advance or finish. */
+async function finishAllocOption(ctx: MyContext): Promise<void> {
   const pending = ctx.session.pending;
   if (!pending) {
     ctx.session.step = "idle";
@@ -133,27 +264,16 @@ async function recordVariantPick(
     return;
   }
   const opt = pending.variants[ctx.session.draftVariantIdx];
-  if (!opt) {
-    ctx.session.step = "awaiting_quantity";
-    await ctx.reply(askQuantityText(ctx));
-    return;
+  if (opt) {
+    for (const v of opt.values) {
+      const q = ctx.session.draftAlloc[v] ?? 0;
+      if (q > 0) {
+        ctx.session.draftPicks.push({ name: opt.name, value: v, qty: q });
+      }
+    }
   }
-  const match = matchVariantValue(opt, rawValue);
-  if (!match) {
-    await ctx.reply(t(ctx.session.lang, "variantInvalid"));
-    await askCurrentVariant(ctx);
-    return;
-  }
-  ctx.session.draftPicks.push({ name: opt.name, value: match });
   ctx.session.draftVariantIdx += 1;
-  if (ctx.session.draftVariantIdx < pending.variants.length) {
-    await askCurrentVariant(ctx);
-    return;
-  }
-  // All options picked — variant unit price resolves at order time from the
-  // quantity tier (ladder), falling back to the matched SKU price.
-  ctx.session.step = "awaiting_name";
-  await ctx.reply(t(ctx.session.lang, "askName"));
+  await sendAllocMessage(ctx);
 }
 
 export function registerCustomerHandlers(bot: Bot<MyContext>): void {
@@ -217,8 +337,10 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
       }
       ctx.session.draftVariantIdx = 0;
       ctx.session.draftPicks = [];
+      ctx.session.draftAlloc = {};
+      ctx.session.draftAllocMsgId = null;
       ctx.session.draftQuantity = 1;
-      // Quantity first (drives the tier price), then variants, then weight.
+      // Quantity first (drives the tier price + allocation total), then variants.
       ctx.session.step = "awaiting_quantity";
       await ctx.reply(askQuantityText(ctx));
     } catch (err) {
@@ -227,8 +349,8 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
     }
   });
 
-  // Variant option buttons: v:<optionIdx>:<valueIdx>
-  bot.callbackQuery(/^v:(\d+):(\d+)$/, async (ctx) => {
+  // Variant allocation steppers: vq:<optionIdx>:<valueIdx>:<+|->
+  bot.callbackQuery(/^vq:(\d+):(\d+):([+-])$/, async (ctx) => {
     try {
       await ctx.answerCallbackQuery();
       if (ctx.session.step !== "awaiting_variant" || !ctx.session.pending) {
@@ -237,16 +359,49 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
       }
       const optIdx = Number(ctx.match[1]);
       const valIdx = Number(ctx.match[2]);
+      const delta = ctx.match[3] === "+" ? 1 : -1;
       if (optIdx !== ctx.session.draftVariantIdx) return; // stale button
       const opt = ctx.session.pending.variants[optIdx];
       const value = opt?.values[valIdx];
-      if (!value) {
+      if (!value || !opt) {
         await ctx.reply(t(ctx.session.lang, "variantInvalid"));
         return;
       }
-      await recordVariantPick(ctx, value);
+      const n = ctx.session.draftQuantity;
+      const cur = ctx.session.draftAlloc[value] ?? 0;
+      ctx.session.draftAlloc[value] = Math.min(
+        n,
+        Math.max(0, cur + delta),
+      );
+      await refreshAllocMessage(ctx);
     } catch (err) {
-      console.error("variant pick failed:", err);
+      console.error("variant stepper failed:", err);
+      await ctx.reply("❌ حدث خطأ. حاول مجدداً.");
+    }
+  });
+
+  // Allocation done: vqdone:<optionIdx>
+  bot.callbackQuery(/^vqdone:(\d+)$/, async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      if (ctx.session.step !== "awaiting_variant" || !ctx.session.pending) {
+        await ctx.reply(t(ctx.session.lang, "sessionExpired"));
+        return;
+      }
+      if (Number(ctx.match[1]) !== ctx.session.draftVariantIdx) return;
+      const sum = allocSum(ctx.session.draftAlloc);
+      const n = ctx.session.draftQuantity;
+      if (sum !== n) {
+        await ctx.reply(
+          t(ctx.session.lang, "allocMismatch")
+            .replace("{SUM}", String(sum))
+            .replace("{N}", String(n)),
+        );
+        return;
+      }
+      await finishAllocOption(ctx);
+    } catch (err) {
+      console.error("variant done failed:", err);
       await ctx.reply("❌ حدث خطأ. حاول مجدداً.");
     }
   });
@@ -270,7 +425,37 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
       // --- In-progress order conversation ---
       switch (ctx.session.step) {
         case "awaiting_variant": {
-          await recordVariantPick(ctx, text);
+          const pending = ctx.session.pending;
+          const opt = pending?.variants[ctx.session.draftVariantIdx];
+          if (!pending || !opt) {
+            await sendAllocMessage(ctx);
+            return;
+          }
+          const parsed = parseAllocation(text, opt);
+          if (!parsed) {
+            await ctx.reply(t(lang, "variantInvalid"));
+            return;
+          }
+          ctx.session.draftAlloc = parsed;
+          // Re-render the live keyboard so counts match the typed input.
+          const msgId = ctx.session.draftAllocMsgId;
+          if (msgId != null && ctx.chat) {
+            try {
+              await ctx.api.editMessageText(ctx.chat.id, msgId, await allocText(ctx, opt), {
+                reply_markup: allocKeyboard(ctx, ctx.session.draftVariantIdx),
+              });
+            } catch {
+              const sent = await ctx.reply(await allocText(ctx, opt), {
+                reply_markup: allocKeyboard(ctx, ctx.session.draftVariantIdx),
+              });
+              ctx.session.draftAllocMsgId = sent.message_id;
+            }
+          } else {
+            const sent = await ctx.reply(await allocText(ctx, opt), {
+              reply_markup: allocKeyboard(ctx, ctx.session.draftVariantIdx),
+            });
+            ctx.session.draftAllocMsgId = sent.message_id;
+          }
           return;
         }
         case "awaiting_quantity": {
@@ -287,7 +472,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
           const pendingNow = ctx.session.pending;
           if (pendingNow && pendingNow.variants.length > 0) {
             ctx.session.step = "awaiting_variant";
-            await askCurrentVariant(ctx);
+            await sendAllocMessage(ctx);
           } else {
             ctx.session.step = "awaiting_name";
             await ctx.reply(t(lang, "askName"));
@@ -371,7 +556,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
           // is absurd next to the scraped price (e.g. cent-vs-yuan mixups).
           const tier = tierPriceFor(pending.tiers, qty);
           const ref = tier ?? pending.priceRmb;
-          let sku = priceForSelection(pending.skus, ctx.session.draftPicks);
+          let sku = maxSkuPrice(pending.skus, ctx.session.draftPicks);
           if (sku !== null && (sku < ref * 0.1 || sku > ref * 10)) {
             console.warn(
               `Discarding implausible SKU price ${sku} vs ref ${ref}`,
@@ -389,7 +574,8 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             benefitDzd: getBenefit(),
           });
           const variantSummary = ctx.session.draftPicks
-            .map((p) => p.value)
+            .filter((p) => p.qty > 0)
+            .map((p) => `${p.value}×${p.qty}`)
             .join(" / ")
             .slice(0, 200);
           const order = createOrder({

@@ -83,6 +83,21 @@ const STRINGS: Dict = {
     fr: "❌ Choisissez parmi les options affichées.",
     en: "❌ Please pick from the options shown.",
   },
+  askVariantAlloc: {
+    ar: "🎨 وزّع {N} قطع على {OPT} — اضغط + / − أو اكتب الكمية مثل:\n{EX}\n✅ الحالي: {SUM}/{N}",
+    fr: "🎨 Répartissez {N} pièces sur {OPT} — touchez +/− ou écrivez ex :\n{EX}\n✅ Actuel : {SUM}/{N}",
+    en: "🎨 Split {N} pieces across {OPT} — tap +/− or type e.g.:\n{EX}\n✅ Current: {SUM}/{N}",
+  },
+  allocMismatch: {
+    ar: "❌ المجموع الحالي {SUM} وليس {N} — عدّل الكميات ثم اضغط تم.",
+    fr: "❌ Total actuel {SUM}, pas {N} — ajustez puis touchez Done.",
+    en: "❌ Current total is {SUM}, not {N} — adjust then tap Done.",
+  },
+  variantDone: {
+    ar: "✅ تم",
+    fr: "✅ OK",
+    en: "✅ Done",
+  },
   askPhone: {
     ar: "📞 ما هو رقم الهاتف؟",
     fr: "📞 Quel est votre numéro de téléphone ?",

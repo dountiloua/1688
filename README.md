@@ -72,7 +72,7 @@ npm run dev
 Customer:
 
 - `/start` — welcome (Arabic default, `/lang` for FR/EN)
-- Send a `1688.com` link → preview (RMB price → DZD price, no exchange-rate internals, no shipping talk) → ✅ confirm → quantity → variant options as tap-buttons when the page declares them (🎨 color → 📏 size → …; per-variant price applied automatically) → name → phone → wilaya → **postal code** → address → **approximate** total (formula + benefit). The admin then locks the **final price** (+ parcel weight → smart-rounded freight) and the customer receives the **invoice** by DM. Deposit is always 10,000 DZD.
+- Send a `1688.com` link → preview (RMB price → DZD price, no exchange-rate internals, no shipping talk) → ✅ confirm → total quantity → **split it across options** (stepper +/− buttons per color/size, or type e.g. `white 2, red 1` — must add up to the total) → name → phone → wilaya → **postal code** → address → **approximate** total (formula + benefit). The admin then locks the **final price** (+ parcel weight → smart-rounded freight) and the customer receives the **invoice** by DM. Deposit is always 10,000 DZD.
 - `/myorders` — order history + status
 - `/cancel` — abort the current flow
 

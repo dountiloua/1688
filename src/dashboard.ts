@@ -168,11 +168,15 @@ function advanceForm(order: OrderRow, token: string): string {
 /** Original Chinese variant + English translation for the admin. */
 function variantLine(summary: string): string {
   if (!summary) return "";
-  const en = summary
-    .split(" / ")
-    .map((v) => translateVariant(v.trim(), "en"))
-    .join(" / ");
-  return en !== summary ? `${esc(summary)} <span class="mut">(${esc(en)})</span>` : esc(summary);
+  const parts = summary.split(" / ").map((chunk) => {
+    const m = chunk.match(/^(.*)[×x](\d+)$/);
+    const name = (m ? m[1] : chunk).trim();
+    const qty = m ? `×${m[2]}` : "";
+    const en = translateVariant(name, "en");
+    const disp = en !== name ? `${esc(name)} (${esc(en)})` : esc(name);
+    return qty ? `${disp}${qty}` : disp;
+  });
+  return parts.join(" / ");
 }
 
 function thumb(img: string, url: string, title: string): string {
