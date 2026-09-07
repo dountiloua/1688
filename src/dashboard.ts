@@ -1,7 +1,7 @@
 /**
- * Admin web panel — order list, order detail, status advancement and
- * pricing settings in a browser. Runs on the same process/port as the
- * Telegram bot (Railway-friendly: one service, no extra infra).
+ * Admin web panel — order list, order detail, status advancement,
+ * deletions and pricing settings in a browser. Runs on the same
+ * process/port as the Telegram bot (Railway-friendly: one service).
  *
  * Auth: shared secret in `ADMIN_PANEL_TOKEN`, passed as `?token=` or a
  * form field. Always served over HTTPS in production (Railway terminates
@@ -27,6 +27,7 @@ import {
 import { getCnyMode, getCnyPerUsd, type CnyRate } from "./fx.js";
 import { formatDzd } from "./i18n.js";
 import type { MyContext } from "./session.js";
+import { translateVariant } from "./variantDict.js";
 
 const STATUS_COLORS: Record<OrderStatus, string> = {
   AWAITING_DEPOSIT: "#b45309",
@@ -37,12 +38,79 @@ const STATUS_COLORS: Record<OrderStatus, string> = {
   CANCELLED: "#b91c1c",
 };
 
+const CSS = `
+:root{--bg:#f1f5f9;--card:#fff;--ink:#0f172a;--mut:#64748b;--line:#e2e8f0;--brand:#0f172a;--accent:#2563eb;--danger:#dc2626;--ok:#16a34a;--r:14px}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0}
+.wrap{max-width:1120px;margin:0 auto;padding:20px 16px 48px}
+.top{position:sticky;top:0;z-index:10;background:rgba(241,245,249,.9);backdrop-filter:blur(8px);padding:14px 0;margin-bottom:14px;border-bottom:1px solid var(--line)}
+.top h1{margin:0;font-size:20px}
+.top p{margin:2px 0 0;color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 1px 3px rgba(15,23,42,.07)}
+.pad{padding:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 14px}
+.stat{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px}
+.stat b{font-size:20px}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:700;color:#fff;white-space:nowrap}
+.notice{background:#ecfdf5;border:1px solid #a7f3d0;padding:10px 14px;border-radius:10px;margin:0 0 14px;font-size:14px}
+.grid2{display:grid;grid-template-columns:1fr 1.35fr;gap:14px;margin:0 0 14px}
+@media(max-width:820px){.grid2{grid-template-columns:1fr}}
+.card h2{margin:0 0 2px;font-size:17px}
+.card h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+.sub{color:var(--mut);font-size:12.5px;margin:0 0 10px}
+.kv{display:grid;grid-template-columns:128px 1fr;gap:6px 10px;font-size:14px}
+.kv dt{color:var(--mut)}
+.kv dd{margin:0;overflow-wrap:anywhere}
+.kv a{color:var(--accent);text-decoration:none}
+.money{width:100%;border-collapse:collapse;font-size:14px}
+.money td{padding:6px 0;border-top:1px dashed var(--line)}
+.money tr:first-child td{border-top:0}
+.money td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.total td{font-weight:800;font-size:16px}
+.mark{display:inline-block;background:#f1f5f9;border:1px dashed #94a3b8;padding:4px 10px;border-radius:8px;font-family:ui-monospace,monospace;font-size:13px}
+button,.btn{font:inherit;cursor:pointer;border:0;border-radius:8px;background:var(--brand);color:#fff;padding:7px 14px;font-size:13.5px}
+.btn-danger{background:var(--danger)}
+.btn-ghost{background:#f1f5f9;color:var(--ink)}
+input,select{font:inherit;padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px;font-size:13.5px;background:#fff}
+a{color:var(--accent)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;font-size:12.5px}
+.pill{display:inline-block;padding:5px 12px;border-radius:999px;text-decoration:none;border:1px solid #cbd5e1;background:#fff;color:var(--ink)}
+.pill.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl th{text-align:left;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:10px 8px;border-bottom:1px solid var(--line)}
+.tbl td{padding:10px 8px;border-top:1px solid var(--line);vertical-align:middle}
+.tbl tbody tr:hover{background:#f8fafc}
+.prodcell{display:flex;gap:10px;align-items:center;min-width:220px}
+.thumb{width:52px;height:52px;object-fit:cover;border-radius:9px;border:1px solid var(--line);flex:none}
+.ptitle{font-weight:600;color:var(--ink);text-decoration:none}
+.ptitle:hover{text-decoration:underline}
+.mut{color:var(--mut);font-size:12px}
+.rowflex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+form.inline{margin:0;display:inline-flex;gap:6px;align-items:center}
+.del{color:var(--danger);text-decoration:none;font-size:16px}
+.confirm{border:2px solid var(--danger);background:#fef2f2}
+.settings{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+.settings label{font-size:12.5px;color:var(--mut)}
+.settings label input{display:block;margin-top:4px;width:130px}
+`;
+
+const JS = `
+function copyMark(btn,text){
+  function done(){var o=btn.textContent;btn.textContent="✓ Copied";setTimeout(function(){btn.textContent=o},1500)}
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(function(){fallback()});}else{fallback()}
+  function fallback(){var ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");done()}catch(e){}document.body.removeChild(ta)}
+}`;
+
 function esc(value: string | number | null | undefined): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function jsStr(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 function isAuthorized(token: string): boolean {
@@ -77,48 +145,88 @@ function parseBody(req: http.IncomingMessage): Promise<URLSearchParams> {
 
 function statusBadge(status: OrderStatus): string {
   const color = STATUS_COLORS[status] ?? "#374151";
-  return `<span style="display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;color:#fff;background:${color}">${esc(status)}</span>`;
+  return `<span class="badge" style="background:${color}">${esc(status)}</span>`;
 }
 
 function advanceForm(order: OrderRow, token: string): string {
   const options = ORDER_STATUSES.filter((s) => s !== order.status)
     .map((s) => `<option value="${s}">${s}</option>`)
     .join("");
-  return `<form method="POST" action="/admin/advance" style="display:inline-flex;gap:6px;align-items:center;margin:0">
+  return `<form class="inline" method="POST" action="/admin/advance">
     <input type="hidden" name="token" value="${esc(token)}" />
     <input type="hidden" name="id" value="${order.id}" />
-    <select name="status" style="padding:4px 6px;border:1px solid #d1d5db;border-radius:6px">${options}</select>
-    <button type="submit" style="padding:4px 10px;background:#111827;color:#fff;border:0;border-radius:6px;cursor:pointer">Move</button>
+    <select name="status">${options}</select>
+    <button type="submit">Move</button>
   </form>`;
 }
 
+/** Original Chinese variant + English translation for the admin. */
+function variantLine(summary: string): string {
+  if (!summary) return "";
+  const en = summary
+    .split(" / ")
+    .map((v) => translateVariant(v.trim(), "en"))
+    .join(" / ");
+  return en !== summary ? `${esc(summary)} <span class="mut">(${esc(en)})</span>` : esc(summary);
+}
+
+function thumb(img: string, url: string, title: string): string {
+  if (!img) return "";
+  return `<a href="${esc(url)}" target="_blank" rel="noreferrer"><img class="thumb" src="${esc(img)}" alt="" loading="lazy" /></a>`;
+}
+
 function orderDetailCard(order: OrderRow, token: string): string {
-  return `<div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin:16px 0;background:#fff">
-    <h2 style="margin:0 0 4px">Order #${order.id} ${statusBadge(order.status)}</h2>
-    <p style="color:#6b7280;font-size:13px">Created ${esc(order.createdAt)} • Telegram user <code>${order.telegramUserId}</code></p>
-    <table style="border-collapse:collapse;width:100%;font-size:14px">
-      <tr><td style="padding:4px 8px;color:#6b7280">Customer</td><td style="padding:4px 8px"><b>${esc(order.fullName)}</b> • ${esc(order.phone)}</td></tr>
-      <tr><td style="padding:4px 8px;color:#6b7280">Delivery</td><td style="padding:4px 8px">${esc(order.wilaya)} — ${esc(order.address)}</td></tr>
-      <tr><td style="padding:4px 8px;color:#6b7280">Product</td><td style="padding:4px 8px">${esc(order.titleRaw)} ×${order.quantity || 1}${order.variantSummary ? `<br/>🎨 ${esc(order.variantSummary)}` : ""}<br/><a href="${esc(order.productUrl)}" target="_blank" rel="noreferrer">1688 link</a></td></tr>
-      <tr><td style="padding:4px 8px;color:#6b7280">Price</td><td style="padding:4px 8px">${esc(String(order.priceRmb))} RMB / unit${order.cnyPerUsd ? ` • ${esc(String(order.cnyPerUsd))} ¥/$ • ${esc(String(order.usdRateDzd))} DZD/$` : ""}</td></tr>
-      <tr><td style="padding:4px 8px;color:#6b7280">Freight</td><td style="padding:4px 8px">${order.weightKg > 0 ? `${esc(String(order.weightKg))} kg → ${esc(formatDzd(order.freightDzd))}` : "unknown → TBD by admin"}</td></tr>
-      <tr><td style="padding:4px 8px;color:#6b7280">Money</td><td style="padding:4px 8px">Total <b>${esc(formatDzd(order.totalAmountDzd))}</b> • Deposit ${esc(formatDzd(order.depositAmountDzd))} • Rest ${esc(formatDzd(order.remainingBalanceDzd))}</td></tr>
-      <tr><td style="padding:4px 8px;color:#6b7280">Shipping mark</td><td style="padding:4px 8px"><code style="background:#f3f4f6;padding:2px 8px;border-radius:6px">HK Shipping / Mark: ${esc(order.shippingMark)}</code></td></tr>
-    </table>
-    <div style="margin-top:10px">${advanceForm(order, token)}</div>
-    <div style="margin-top:8px"><a href="/admin?token=${esc(token)}&delete=${order.id}" style="color:#b91c1c;font-size:13px">🗑️ Delete this order…</a></div>
+  const mark = `HK Shipping / Mark: ${order.shippingMark}`;
+  return `<div class="grid2">
+    <div class="card pad">
+      <h3>👤 Customer</h3>
+      <h2>${esc(order.fullName)}</h2>
+      <p class="sub">Order #${order.id} ${statusBadge(order.status)}</p>
+      <dl class="kv">
+        <dt>Phone</dt><dd><a href="tel:${esc(order.phone)}">${esc(order.phone)}</a></dd>
+        <dt>Wilaya</dt><dd>${esc(order.wilaya)}</dd>
+        <dt>Postal code</dt><dd>${esc(order.postalCode) || '<span class="mut">—</span>'}</dd>
+        <dt>Address</dt><dd>${esc(order.address)}</dd>
+        <dt>Telegram ID</dt><dd><code>${order.telegramUserId}</code></dd>
+        <dt>Created</dt><dd>${esc(order.createdAt)}</dd>
+      </dl>
+    </div>
+    <div class="card pad">
+      <h3>📦 Order</h3>
+      <div class="rowflex" style="margin-bottom:10px">
+        ${thumb(order.imageUrl, order.productUrl, order.titleRaw)}
+        <div><a class="ptitle" style="font-size:15px" href="${esc(order.productUrl)}" target="_blank" rel="noreferrer">${esc(order.titleRaw)} ↗</a>
+        <div class="mut">×${order.quantity || 1} • ${esc(String(order.priceRmb))} RMB / unit</div></div>
+      </div>
+      ${order.variantSummary ? `<p style="margin:0 0 10px">🎨 ${variantLine(order.variantSummary)}</p>` : ""}
+      <table class="money">
+        <tr><td>Product (${order.quantity || 1} × ${esc(String(order.priceRmb))} RMB)</td><td>${esc(formatDzd((order.totalAmountDzd - order.freightDzd)))}</td></tr>
+        <tr><td>Freight ${order.weightKg > 0 ? `(${esc(String(order.weightKg))} kg)` : "(weight unknown)"}</td><td>${order.weightKg > 0 ? esc(formatDzd(order.freightDzd)) : "TBD"}</td></tr>
+        <tr class="total"><td>Total</td><td>${esc(formatDzd(order.totalAmountDzd))}</td></tr>
+        <tr><td>Deposit</td><td>${esc(formatDzd(order.depositAmountDzd))}</td></tr>
+        <tr><td>Remaining</td><td>${esc(formatDzd(order.remainingBalanceDzd))}</td></tr>
+      </table>
+      <p class="mut" style="margin:8px 0">Rates locked at order time: ${esc(String(order.cnyPerUsd || "—"))} ¥/$ • ${esc(String(order.usdRateDzd || "—"))} DZD/$</p>
+      <div class="rowflex">
+        <code class="mark">${esc(mark)}</code>
+        <button class="btn-ghost btn" onclick="copyMark(this,'${jsStr(mark)}')">⧉ Copy</button>
+      </div>
+      <div class="rowflex" style="margin-top:12px">${advanceForm(order, token)}
+        <a class="del" style="font-size:13px" href="/admin?token=${esc(token)}&delete=${order.id}">🗑️ Delete…</a>
+      </div>
+    </div>
   </div>`;
 }
 
 function deleteConfirmCard(order: OrderRow, token: string): string {
-  return `<div style="border:2px solid #b91c1c;border-radius:10px;padding:16px;margin:16px 0;background:#fef2f2">
-    <h2 style="margin:0 0 4px;color:#b91c1c">🗑️ Delete order #${order.id}?</h2>
-    <p style="margin:0 0 12px;font-size:14px">${esc(order.titleRaw.slice(0, 100))} ×${order.quantity || 1} • <b>${esc(formatDzd(order.totalAmountDzd))}</b> • ${statusBadge(order.status)}<br/>This is permanent and cannot be undone.</p>
-    <form method="POST" action="/admin/delete" style="display:inline;margin:0">
+  return `<div class="card pad confirm" style="margin-bottom:14px">
+    <h2 style="color:var(--danger)">🗑️ Delete order #${order.id}?</h2>
+    <p style="margin:6px 0 12px;font-size:14px">${esc(order.titleRaw.slice(0, 100))} ×${order.quantity || 1} • <b>${esc(formatDzd(order.totalAmountDzd))}</b> • ${statusBadge(order.status)}<br/>This is permanent and cannot be undone.</p>
+    <form class="inline" method="POST" action="/admin/delete">
       <input type="hidden" name="token" value="${esc(token)}" />
       <input type="hidden" name="id" value="${order.id}" />
       <input type="hidden" name="confirm" value="yes" />
-      <button type="submit" style="padding:7px 16px;background:#b91c1c;color:#fff;border:0;border-radius:6px;cursor:pointer">Yes, delete permanently</button>
+      <button type="submit" class="btn-danger">Yes, delete permanently</button>
     </form>
     &nbsp;<a href="/admin?token=${esc(token)}&view=${order.id}">Cancel</a>
   </div>`;
@@ -141,73 +249,71 @@ function dashboardPage(opts: {
     opts;
   const totalOrders = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  const filterLinks = [
-    `<a href="/admin?token=${esc(token)}" style="${filterStyle(activeStatus === "")}">All (${totalOrders})</a>`,
-    ...ORDER_STATUSES.map(
+  const filterLinks =
+    `<a class="pill${activeStatus === "" ? " on" : ""}" href="/admin?token=${esc(token)}">All (${totalOrders})</a>` +
+    ORDER_STATUSES.map(
       (s) =>
-        `<a href="/admin?token=${esc(token)}&status=${s}" style="${filterStyle(activeStatus === s)}">${s} (${counts[s]})</a>`,
-    ),
-  ].join(" ");
+        `<a class="pill${activeStatus === s ? " on" : ""}" href="/admin?token=${esc(token)}&status=${s}">${s} (${counts[s]})</a>`,
+    ).join("");
 
   const rows = orders
     .map(
-      (o) => `<tr style="border-top:1px solid #e5e7eb">
-      <td style="padding:8px"><b>#${o.id}</b><br/><span style="font-size:12px;color:#6b7280">${esc(o.createdAt.slice(0, 16).replace("T", " "))}</span></td>
-      <td style="padding:8px">${esc(o.fullName)}<br/><span style="font-size:12px;color:#6b7280">${esc(o.phone)} • ${esc(o.wilaya)}</span></td>
-      <td style="padding:8px;max-width:280px">${esc(o.titleRaw.slice(0, 80))} ×${o.quantity || 1}<br/><code style="font-size:11px;background:#f3f4f6;padding:1px 6px;border-radius:4px">${esc(o.shippingMark)}</code></td>
-      <td style="padding:8px;white-space:nowrap">${esc(formatDzd(o.totalAmountDzd))}<br/><span style="font-size:12px;color:#6b7280">dep. ${esc(formatDzd(o.depositAmountDzd))}</span></td>
-      <td style="padding:8px">${statusBadge(o.status)}</td>
-      <td style="padding:8px;white-space:nowrap"><a href="/admin?token=${esc(token)}&status=${esc(activeStatus)}&view=${o.id}">View</a> &nbsp; ${advanceForm(o, token)} &nbsp; <a href="/admin?token=${esc(token)}&status=${esc(activeStatus)}&delete=${o.id}" style="color:#b91c1c" title="Delete order">🗑️</a></td>
+      (o) => `<tr>
+      <td><b>#${o.id}</b><br/><span class="mut">${esc(o.createdAt.slice(0, 16).replace("T", " "))}</span></td>
+      <td><b>${esc(o.fullName)}</b><br/><span class="mut">${esc(o.phone)} • ${esc(o.wilaya)}${o.postalCode ? ` ${esc(o.postalCode)}` : ""}</span></td>
+      <td><div class="prodcell">${thumb(o.imageUrl, o.productUrl, o.titleRaw)}<div><a class="ptitle" href="${esc(o.productUrl)}" target="_blank" rel="noreferrer">${esc(o.titleRaw.slice(0, 80))} ↗</a><br/><code class="mut">${esc(o.shippingMark)}</code></div></div></td>
+      <td style="white-space:nowrap">${esc(formatDzd(o.totalAmountDzd))}<br/><span class="mut">dep. ${esc(formatDzd(o.depositAmountDzd))}</span></td>
+      <td>${statusBadge(o.status)}</td>
+      <td style="white-space:nowrap"><a href="/admin?token=${esc(token)}&status=${esc(activeStatus)}&view=${o.id}">View</a> &nbsp; ${advanceForm(o, token)} &nbsp; <a class="del" title="Delete order" href="/admin?token=${esc(token)}&status=${esc(activeStatus)}&delete=${o.id}">🗑️</a></td>
     </tr>`,
     )
     .join("");
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>1688-DZ Admin</title></head>
-  <body style="font-family:system-ui,-apple-system,sans-serif;background:#f9fafb;color:#111827;margin:0">
-  <div style="max-width:1100px;margin:0 auto;padding:20px">
-    <h1 style="margin:0 0 4px">📦 1688-DZ Admin Panel</h1>
-    <p style="color:#6b7280;margin:0 0 16px">Orders, statuses & pricing — changes notify the customer on Telegram automatically.</p>
-    ${notice ? `<p style="background:#ecfdf5;border:1px solid #a7f3d0;padding:8px 12px;border-radius:8px">${esc(notice)}</p>` : ""}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-      ${Object.entries(counts).map(([s, n]) => `<span style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px;font-size:13px">${statusBadge(s as OrderStatus)} <b>${n}</b></span>`).join("")}
+  <title>1688-DZ Admin</title><style>${CSS}</style></head>
+  <body><div class="top"><div class="wrap" style="padding-top:0;padding-bottom:0">
+    <h1>📦 1688-DZ Admin Panel</h1>
+    <p>Orders, statuses & pricing — status changes notify the customer on Telegram automatically.</p>
+  </div></div>
+  <div class="wrap">
+    ${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
+    <div class="stats">
+      ${Object.entries(counts).map(([s, n]) => `<div class="card stat">${statusBadge(s as OrderStatus)} <b>${n}</b></div>`).join("")}
     </div>
-    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;margin-bottom:16px">
-      <form method="POST" action="/admin/settings" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:0">
-        <input type="hidden" name="token" value="${esc(token)}" />
-        <label style="font-size:13px">USD rate (DZD per $)<br/><input name="usd_rate" value="${usdRate}" inputmode="decimal" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;width:110px" /></label>
-        <label style="font-size:13px">CNY→USD ("auto" or fixed)<br/><input name="cny" value="${cnyMode === "manual" ? esc(String(cny?.rate ?? "")) : "auto"}" inputmode="text" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;width:110px" /></label>
-        <label style="font-size:13px">Freight (DZD / kg)<br/><input name="freight_kg" value="${freightPerKg}" inputmode="numeric" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;width:120px" /></label>
-        <button type="submit" style="padding:7px 14px;background:#111827;color:#fff;border:0;border-radius:6px;cursor:pointer">Save (new orders only)</button>
+    <div class="card pad" style="margin-bottom:14px">
+      <form method="POST" action="/admin/settings" style="margin:0">
+        <div class="settings">
+          <input type="hidden" name="token" value="${esc(token)}" />
+          <label>USD rate (DZD per $)<input name="usd_rate" value="${usdRate}" inputmode="decimal" /></label>
+          <label>CNY→USD ("auto" or fixed)<input name="cny" value="${cnyMode === "manual" ? esc(String(cny?.rate ?? "")) : "auto"}" inputmode="text" /></label>
+          <label>Freight (DZD / kg)<input name="freight_kg" value="${freightPerKg}" inputmode="numeric" /></label>
+          <button type="submit">Save (new orders only)</button>
+        </div>
       </form>
-      <p style="font-size:12px;color:#6b7280;margin:8px 0 0">CNY→USD now: <b>${cny ? esc(cny.rate.toFixed(4)) : "unavailable"}</b>${cny ? ` (${esc(cny.source)}${cny.updatedAt ? `, ${esc(cny.updatedAt.slice(0, 16).replace("T", " "))}` : ""})` : ""} • mode: <b>${esc(cnyMode)}</b></p>
+      <p class="mut" style="margin:8px 0 0">CNY→USD now: <b>${cny ? esc(cny.rate.toFixed(4)) : "unavailable"}</b>${cny ? ` (${esc(cny.source)}${cny.updatedAt ? `, ${esc(cny.updatedAt.slice(0, 16).replace("T", " "))}` : ""})` : ""} • mode: <b>${esc(cnyMode)}</b></p>
     </div>
-    <div style="margin-bottom:12px;font-size:13px;display:flex;gap:8px;flex-wrap:wrap">${filterLinks}</div>
+    <div class="filters">${filterLinks}</div>
     ${deleteTarget ? deleteConfirmCard(deleteTarget, token) : ""}
     ${view && (!deleteTarget || deleteTarget.id !== view.id) ? orderDetailCard(view, token) : ""}
-    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow-x:auto">
-    <table style="border-collapse:collapse;width:100%;font-size:14px">
-      <thead><tr style="text-align:left;color:#6b7280;font-size:12px;text-transform:uppercase">
-        <th style="padding:8px">Order</th><th style="padding:8px">Customer</th><th style="padding:8px">Product</th><th style="padding:8px">Total</th><th style="padding:8px">Status</th><th style="padding:8px">Actions</th>
+    <div class="card" style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr>
+        <th>Order</th><th>Customer</th><th>Product</th><th>Total</th><th>Status</th><th>Actions</th>
       </tr></thead>
-      <tbody>${rows || `<tr><td colspan="6" style="padding:16px;color:#6b7280">No orders yet.</td></tr>`}</tbody>
+      <tbody>${rows || `<tr><td colspan="6" style="padding:16px;color:var(--mut)">No orders yet.</td></tr>`}</tbody>
     </table></div>
-  </div></body></html>`;
-}
-
-function filterStyle(active: boolean): string {
-  return `display:inline-block;padding:4px 10px;border-radius:999px;text-decoration:none;font-size:12px;border:1px solid #d1d5db;${active ? "background:#111827;color:#fff;" : "background:#fff;color:#111827;"}`;
+  </div><script>${JS}</script></body></html>`;
 }
 
 function loginPage(): string {
-  return `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>1688-DZ Admin</title></head>
-  <body style="font-family:system-ui,sans-serif;background:#f9fafb;display:flex;justify-content:center;padding-top:15vh">
-  <form method="GET" action="/admin" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;width:320px">
+  return `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>1688-DZ Admin</title><style>${CSS}</style></head>
+  <body style="display:flex;justify-content:center;padding:15vh 16px 0">
+  <form class="card pad" method="GET" action="/admin" style="width:340px">
     <h2 style="margin-top:0">🔐 Admin Panel</h2>
-    <p style="color:#6b7280;font-size:13px">Enter the <code>ADMIN_PANEL_TOKEN</code> from your <code>.env</code>.</p>
-    <input type="password" name="token" autofocus style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px" />
-    <button type="submit" style="margin-top:12px;width:100%;padding:8px;background:#111827;color:#fff;border:0;border-radius:6px;cursor:pointer">Open panel</button>
+    <p class="mut">Enter the <code>ADMIN_PANEL_TOKEN</code> from your <code>.env</code>.</p>
+    <input type="password" name="token" autofocus style="width:100%" />
+    <button type="submit" style="margin-top:12px;width:100%">Open panel</button>
   </form></body></html>`;
 }
 
@@ -294,6 +400,29 @@ async function handle(
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/admin/delete") {
+    const body = await parseBody(req);
+    const token = body.get("token") ?? "";
+    if (!isAuthorized(token)) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("forbidden");
+      return;
+    }
+    const id = Number(body.get("id"));
+    if (!Number.isInteger(id) || id <= 0 || body.get("confirm") !== "yes") {
+      redirect(res, token, "Delete not confirmed — nothing removed.");
+      return;
+    }
+    const existing = getOrderById(id);
+    if (!existing) {
+      redirect(res, token, `Order #${body.get("id")} not found.`);
+      return;
+    }
+    const ok = deleteOrder(id);
+    redirect(res, token, ok ? `🗑️ Order #${id} permanently deleted.` : `Order #${id} could not be deleted.`);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/admin/settings") {
     const body = await parseBody(req);
     const token = body.get("token") ?? "";
@@ -326,29 +455,6 @@ async function handle(
       msgs.push(`freight → ${formatDzd(freightKg)}/kg`);
     }
     redirect(res, token, msgs.length > 0 ? msgs.join(" • ") + " (new orders only)." : "No valid values — nothing changed.");
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/admin/delete") {
-    const body = await parseBody(req);
-    const token = body.get("token") ?? "";
-    if (!isAuthorized(token)) {
-      res.writeHead(403, { "content-type": "text/plain" });
-      res.end("forbidden");
-      return;
-    }
-    const id = Number(body.get("id"));
-    if (!Number.isInteger(id) || id <= 0 || body.get("confirm") !== "yes") {
-      redirect(res, token, "Delete not confirmed — nothing removed.");
-      return;
-    }
-    const existing = getOrderById(id);
-    if (!existing) {
-      redirect(res, token, `Order #${body.get("id")} not found.`);
-      return;
-    }
-    const ok = deleteOrder(id);
-    redirect(res, token, ok ? `🗑️ Order #${id} permanently deleted.` : `Order #${id} could not be deleted.`);
     return;
   }
 

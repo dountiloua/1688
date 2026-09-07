@@ -11,6 +11,7 @@ export type ConversationStep =
   | "awaiting_name"
   | "awaiting_phone"
   | "awaiting_wilaya"
+  | "awaiting_postal"
   | "awaiting_address";
 
 export interface PendingProduct {
@@ -39,6 +40,7 @@ export interface SessionData {
   draftName: string;
   draftPhone: string;
   draftWilaya: string;
+  draftPostalCode: string;
 }
 
 export type MyContext = Context & SessionFlavor<SessionData>;
@@ -55,5 +57,6 @@ export function initialSession(): SessionData {
     draftName: "",
     draftPhone: "",
     draftWilaya: "",
+    draftPostalCode: "",
   };
 }

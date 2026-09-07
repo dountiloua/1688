@@ -110,7 +110,7 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
         [
           `🧾 Order #${o.id} • ${o.status}`,
           `👤 ${o.fullName} • ${o.phone}`,
-          `📍 ${o.wilaya} — ${o.address}`,
+          `📍 ${o.wilaya} ${o.postalCode} — ${o.address}`,
           `🧾 ${o.titleRaw} ×${o.quantity || 1}`,
           o.variantSummary ? `🎨 ${o.variantSummary}` : null,
           `💴 ${o.priceRmb} RMB / unit`,

@@ -31,10 +31,12 @@ export interface OrderRow {
   fullName: string;
   phone: string;
   wilaya: string;
+  postalCode: string;
   address: string;
   productUrl: string;
   titleRaw: string;
   priceRmb: number;
+  imageUrl: string;
   variantSummary: string;
   fxRateRmbDzd: number;
   quantity: number;
@@ -55,10 +57,12 @@ export interface NewOrder {
   fullName: string;
   phone: string;
   wilaya: string;
+  postalCode: string;
   address: string;
   productUrl: string;
   titleRaw: string;
   priceRmb: number;
+  imageUrl: string;
   variantSummary: string;
   fxRateRmbDzd: number;
   quantity: number;
@@ -170,6 +174,12 @@ function migrate(database: Database.Database): void {
   if (!hasCol("variantSummary")) {
     database.exec("ALTER TABLE orders ADD COLUMN variantSummary TEXT NOT NULL DEFAULT ''");
   }
+  if (!hasCol("postalCode")) {
+    database.exec("ALTER TABLE orders ADD COLUMN postalCode TEXT NOT NULL DEFAULT ''");
+  }
+  if (!hasCol("imageUrl")) {
+    database.exec("ALTER TABLE orders ADD COLUMN imageUrl TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export function getSetting(key: string): string | null {
@@ -223,14 +233,14 @@ export function createOrder(input: NewOrder): OrderRow {
   const database = getDb();
   const stmt = database.prepare(`
     INSERT INTO orders (
-      telegramUserId, fullName, phone, wilaya, address,
-      productUrl, titleRaw, priceRmb, variantSummary, fxRateRmbDzd,
+      telegramUserId, fullName, phone, wilaya, postalCode, address,
+      productUrl, titleRaw, priceRmb, imageUrl, variantSummary, fxRateRmbDzd,
       quantity, weightKg, freightDzd, cnyPerUsd, usdRateDzd,
       totalAmountDzd, depositAmountDzd, remainingBalanceDzd,
       shippingMark, status
     ) VALUES (
-      @telegramUserId, @fullName, @phone, @wilaya, @address,
-      @productUrl, @titleRaw, @priceRmb, @variantSummary, @fxRateRmbDzd,
+      @telegramUserId, @fullName, @phone, @wilaya, @postalCode, @address,
+      @productUrl, @titleRaw, @priceRmb, @imageUrl, @variantSummary, @fxRateRmbDzd,
       @quantity, @weightKg, @freightDzd, @cnyPerUsd, @usdRateDzd,
       @totalAmountDzd, @depositAmountDzd, @remainingBalanceDzd,
       '', @status

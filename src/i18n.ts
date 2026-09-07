@@ -93,6 +93,16 @@ const STRINGS: Dict = {
     fr: "📍 Quelle wilaya ? (ex : Alger, Oran, Sétif...)",
     en: "📍 Which wilaya? (e.g. Algiers, Oran, Sétif...)",
   },
+  askPostal: {
+    ar: "📮 ما هو الرمز البريدي؟ (5 أرقام، مثال: 16000)",
+    fr: "📮 Quel est le code postal ? (5 chiffres, ex : 16000)",
+    en: "📮 What is the postal code? (5 digits, e.g. 16000)",
+  },
+  askPostalInvalid: {
+    ar: "❌ الرمز البريدي 5 أرقام (مثال: 16000). حاول مجدداً.",
+    fr: "❌ Le code postal fait 5 chiffres (ex : 16000). Réessayez.",
+    en: "❌ Postal code is 5 digits (e.g. 16000). Try again.",
+  },
   askAddress: {
     ar: "🏠 ما هو عنوان التوصيل الكامل؟ (البلدية، الشارع، نقطة مرجعية...)",
     fr: "🏠 Quelle est l'adresse de livraison complète ?",

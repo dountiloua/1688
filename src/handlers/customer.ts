@@ -8,6 +8,7 @@ import {
 import { getCnyPerUsd } from "../fx.js";
 import { formatDzd, t } from "../i18n.js";
 import { priceForSelection, tierPriceFor, type VariantOption } from "../scraper/parse1688.js";
+import { translatePicks, translateVariant } from "../variantDict.js";
 import {
   is1688Url,
   Product1688ScrapeError,
@@ -56,10 +57,14 @@ function askVariantText(lang: Lang, opt: VariantOption): string {
   return t(lang, "askVariantOther").replace("{NAME}", opt.name);
 }
 
-function variantKeyboard(opt: VariantOption, optIdx: number): InlineKeyboard {
+function variantKeyboard(
+  opt: VariantOption,
+  optIdx: number,
+  lang: Lang,
+): InlineKeyboard {
   const kb = new InlineKeyboard();
   opt.values.forEach((v, vi) => {
-    kb.text(v.slice(0, 40), `v:${optIdx}:${vi}`);
+    kb.text(translateVariant(v, lang).slice(0, 40), `v:${optIdx}:${vi}`);
     if (vi % 2 === 1) kb.row();
   });
   return kb;
@@ -109,7 +114,7 @@ async function askCurrentVariant(ctx: MyContext): Promise<void> {
   const line = await unitDzdLine(pending, ctx.session.draftQuantity);
   if (line) msg += `\n${line}`;
   await ctx.reply(msg, {
-    reply_markup: variantKeyboard(opt, ctx.session.draftVariantIdx),
+    reply_markup: variantKeyboard(opt, ctx.session.draftVariantIdx, ctx.session.lang),
   });
 }
 
@@ -342,6 +347,17 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             return;
           }
           ctx.session.draftWilaya = text.slice(0, 100);
+          ctx.session.step = "awaiting_postal";
+          await ctx.reply(t(lang, "askPostal"));
+          return;
+        }
+        case "awaiting_postal": {
+          const postal = text.replace(/[\s-]/g, "");
+          if (!/^\d{5}$/.test(postal)) {
+            await ctx.reply(t(lang, "askPostalInvalid"));
+            return;
+          }
+          ctx.session.draftPostalCode = postal;
           ctx.session.step = "awaiting_address";
           await ctx.reply(t(lang, "askAddress"));
           return;
@@ -406,10 +422,12 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             fullName: ctx.session.draftName,
             phone: ctx.session.draftPhone,
             wilaya: ctx.session.draftWilaya,
+            postalCode: ctx.session.draftPostalCode,
             address: text.slice(0, 500),
             productUrl: pending.url,
             titleRaw: pending.title,
             priceRmb: unitRmb,
+            imageUrl: pending.imageUrl,
             variantSummary,
             // Effective RMB→DZD rate actually charged (USD leg stays hidden).
             fxRateRmbDzd: usdRate / cny,
@@ -426,6 +444,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
 
           ctx.session.step = "idle";
           ctx.session.pending = null;
+          const picksForMsg = ctx.session.draftPicks;
           ctx.session.draftVariantIdx = 0;
           ctx.session.draftPicks = [];
           ctx.session.draftQuantity = 1;
@@ -433,6 +452,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
           ctx.session.draftName = "";
           ctx.session.draftPhone = "";
           ctx.session.draftWilaya = "";
+          ctx.session.draftPostalCode = "";
 
           const shippingLine =
             quote.weightKg > 0
@@ -445,7 +465,9 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
               ``,
               `🧾 طلب #${order.id} ×${quote.quantity}`,
               `📦 ${order.titleRaw.slice(0, 120)}`,
-              order.variantSummary ? `🎨 النوع: ${order.variantSummary}` : null,
+              order.variantSummary
+                ? `🎨 النوع: ${translatePicks(picksForMsg, lang) || order.variantSummary}`
+                : null,
               `💴 سعر القطعة: ${unitRmb} RMB ≈ ${formatDzd(quote.unitPriceDzd)}`,
               `📦 مجموع المنتج (${quote.quantity}): ${formatDzd(quote.productTotalDzd)}`,
               shippingLine,
