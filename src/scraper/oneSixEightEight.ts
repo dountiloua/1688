@@ -211,7 +211,23 @@ async function scrapeOnce(
         ".mod-detail-price",
       ]);
       if (!priceText) {
-        const m = bodyText.match(/[¥￥]\s?[\d,]+(?:\.\d+)?(?:\s*[-~–]\s*[¥￥]?\s?[\d,]+(?:\.\d+)?)?/);
+        // First ¥-amount that is NOT a shipping/freight mention
+        // ("运费¥4起" = shipping-from-¥4 is not the product price).
+        const re = /[¥￥]\s?[\d,]+(?:\.\d+)?(?:\s*[-~–]\s*[¥￥]?\s?[\d,]+(?:\.\d+)?)?/g;
+        let m = null;
+        for (const cand of bodyText.matchAll(re)) {
+          const idx = cand.index ?? 0;
+          const context = bodyText.slice(Math.max(0, idx - 100), idx + 60);
+          if (
+            /运费|邮费|快递费|运费险|邮资|freight|shipping|postage|物流|到付/i.test(
+              context,
+            )
+          ) {
+            continue;
+          }
+          m = cand;
+          break;
+        }
         priceText = m ? m[0] : null;
       }
 

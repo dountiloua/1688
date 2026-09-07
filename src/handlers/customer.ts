@@ -376,12 +376,19 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
           const usdRate = getUsdRate();
           const freightPerKg = getFreightPerKg();
           const qty = ctx.session.draftQuantity;
-          // Unit price: quantity-tier ladder wins (real 1688 wholesale price
-          // for this qty), then matched-SKU price, then scraped lowest.
-          const unitRmb =
-            tierPriceFor(pending.tiers, qty) ??
-            priceForSelection(pending.skus, ctx.session.draftPicks) ??
-            pending.priceRmb;
+          // Unit price: ladder tier for this qty and matched-SKU price vote;
+          // take the higher (never undercharge), but discard any signal that
+          // is absurd next to the scraped price (e.g. cent-vs-yuan mixups).
+          const tier = tierPriceFor(pending.tiers, qty);
+          const ref = tier ?? pending.priceRmb;
+          let sku = priceForSelection(pending.skus, ctx.session.draftPicks);
+          if (sku !== null && (sku < ref * 0.1 || sku > ref * 10)) {
+            console.warn(
+              `Discarding implausible SKU price ${sku} vs ref ${ref}`,
+            );
+            sku = null;
+          }
+          const unitRmb = Math.max(tier ?? 0, sku ?? 0, pending.priceRmb);
           const quote = quotePrice({
             priceRmb: unitRmb,
             quantity: qty,

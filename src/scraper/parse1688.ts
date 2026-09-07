@@ -75,6 +75,9 @@ function parseFirstNumber(text: string): number | null {
 /**
  * Collect every plausible RMB price on the page, return the lowest
  * (1688 shows price ladders / ranges — spec says take the lowest tier).
+ *
+ * ¥-amounts sitting next to freight/shipping words (e.g. "运费¥4起" =
+ * "shipping from ¥4") are NOT product prices and are skipped.
  */
 export function extractPricesRmb(html: string): number[] {
   const found: number[] = [];
@@ -82,6 +85,15 @@ export function extractPricesRmb(html: string): number[] {
   // ¥ / ￥ / &yen; prefixed amounts, incl. ranges ("¥12.5-18.9" -> 12.5 via parseFirstNumber)
   const symbolRe = /(?:¥|￥|&yen;|&#165;)\s?[\d,]+(?:\.\d+)?/gi;
   for (const m of html.matchAll(symbolRe)) {
+    const idx = m.index ?? 0;
+    const context = html.slice(Math.max(0, idx - 100), idx + 60);
+    if (
+      /运费|邮费|快递费|运费险|邮资|freight|shipping|postage|物流|到付|delivery fee/i.test(
+        context,
+      )
+    ) {
+      continue;
+    }
     const n = parseFirstNumber(m[0]);
     if (n !== null) found.push(n);
   }
@@ -97,7 +109,24 @@ export function extractPricesRmb(html: string): number[] {
   return found;
 }
 
+/**
+ * The page's own displayed price (`priceDisplay`, `minPrice`, ...).
+ * More authoritative than any ¥-scraping heuristic.
+ */
+export function extractDisplayPrice(html: string): number | null {
+  const re =
+    /"(?:priceDisplay|minPrice|offerMinPrice)"\s*:\s*"?([\d,]+(?:\.\d+)?)"?/g;
+  let best: number | null = null;
+  for (const m of html.matchAll(re)) {
+    const n = parseFirstNumber(m[1]);
+    if (n !== null && (best === null || n < best)) best = n;
+  }
+  return best;
+}
+
 export function extractImageUrl(html: string): string {
+  const candidates: string[] = [];
+
   // 1. Open-Graph image
   const og =
     html.match(
@@ -106,21 +135,53 @@ export function extractImageUrl(html: string): string {
     html.match(
       /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
     );
-  if (og?.[1] && isHttpUrl(og[1])) return normalizeUrl(og[1]);
+  if (og?.[1] && isHttpUrl(og[1])) candidates.push(og[1]);
 
-  // 2. Alibaba CDN image URLs embedded in JSON ("picUrl":"//cbu01.alicdn.com/...")
-  const cdn = html.match(
-    /"((?:https?:)?\/\/(?:cbu0\d|img)\.alicdn\.com[^"'\s\\]+?\.(?:jpe?g|png|webp))"/i,
+  // 2. Gallery image URLs embedded in JSON
+  for (const m of html.matchAll(
+    /"(?:picUrl|originalImage|imageUrl|imgUrl|mainImage)"\s*:\s*"((?:https?:)?\/\/[^"'\s\\]+)"/gi,
+  )) {
+    if (isHttpUrl(m[1])) candidates.push(m[1].replace(/\\/g, ""));
+  }
+
+  // 3. Alibaba CDN <img> tags
+  for (const m of html.matchAll(
+    /<img[^>]+src=["']((?:https?:)?\/\/[^"']*alicdn\.com[^"']*)["']/gi,
+  )) {
+    candidates.push(m[1]);
+  }
+
+  // Product photos live on cbu hosts; img/imgextra hosts are mostly UI icons.
+  const good = candidates
+    .map(normalizeUrl)
+    .filter((u) => u && !isJunkImageUrl(u));
+  return (
+    good.find((u) => u.includes("/cbu") || u.includes("ibank")) ?? good[0] ?? ""
   );
-  if (cdn?.[1]) return normalizeUrl(cdn[1].replace(/\\/g, ""));
+}
 
-  // 3. Any alicdn <img> as last resort
-  const img = html.match(
-    /<img[^>]+src=["']((?:https?:)?\/\/[^"']*alicdn\.com[^"']*)["']/i,
-  );
-  if (img?.[1]) return normalizeUrl(img[1]);
-
-  return "";
+/** Reject UI icons, sprites, thumbnails and placeholder graphics. */
+function isJunkImageUrl(url: string): boolean {
+  const l = url.toLowerCase();
+  if (/\.svg(\?|$)/.test(l)) return true; // vector UI icons
+  if (l.includes("-tps-")) return true; // tiny UI sprites (e.g. 15-14px)
+  if (
+    /captcha|lock|loading|placeholder|nofoto|no-image|blank|spacer|pixel|default-avatar|404|error/i.test(
+      l,
+    )
+  ) {
+    return true;
+  }
+  // Trailing dimension suffixes: -58-60.png, _50x50.jpg, etc.
+  const dim =
+    l.match(/[_-](\d{1,4})x(\d{1,4})\.(png|jpe?g|webp|gif)/) ??
+    l.match(/-(\d{1,4})-(\d{1,4})\.(png|jpe?g|webp|gif)(?:\?|$)/);
+  if (dim) {
+    const w = Number(dim[1]);
+    const h = Number(dim[2]);
+    if (Math.max(w, h) < 250) return true;
+  }
+  return false;
 }
 
 function isHttpUrl(value: string): boolean {
@@ -161,14 +222,6 @@ export function parse1688ProductHtml(
     );
   }
 
-  const prices = extractPricesRmb(html);
-  if (prices.length === 0) {
-    throw new Error(
-      "No RMB price found in page HTML (page may require login or be a captcha wall).",
-    );
-  }
-  const priceRmb = Math.min(...prices);
-
   let variants: VariantOption[] = [];
   let skus: SkuEntry[] = [];
   let tiers: PriceTier[] = [];
@@ -179,6 +232,22 @@ export function parse1688ProductHtml(
     tiers = v.tiers;
   } catch {
     // Variants are optional — never fail a scrape because of them.
+  }
+
+  const prices = extractPricesRmb(html);
+  const visibleMin = prices.length > 0 ? Math.min(...prices) : null;
+
+  // Price priority: quantity-ladder rung for 1 piece > the page's own
+  // displayed price > visible-¥ heuristic. The heuristic is blind — it once
+  // picked "运费¥4起" (shipping-from-¥4) over the real ¥28 product price —
+  // so it only ever wins when nothing structured exists.
+  const tier1 = tierPriceFor(tiers, 1);
+  const display = extractDisplayPrice(html);
+  const priceRmb: number | null = tier1 ?? display ?? visibleMin;
+  if (priceRmb === null) {
+    throw new Error(
+      "No RMB price found in page HTML (page may require login or be a captcha wall).",
+    );
   }
 
   // The quantity ladder's first rung doubles as the effective MOQ.
@@ -287,14 +356,18 @@ function readSpecValue(o: Record<string, unknown>): string | null {
 }
 
 function readSkuPrice(o: Record<string, unknown>): number | null {
+  // Order matters: real charge prices first, ambiguous counters last.
+  // (`priceAmount` is unreliable — on some pages it's the ladder floor,
+  // on others a meaningless flag.)
   for (const k of [
+    "discountPrice",
     "price",
     "salePrice",
-    "discountPrice",
     "minPrice",
     "skuPrice",
     "priceText",
     "promotionPrice",
+    "priceAmount",
   ]) {
     const v = o[k];
     if (typeof v === "number" && Number.isFinite(v) && v > 0 && v < 100000000) {
