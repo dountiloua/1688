@@ -14,6 +14,8 @@
 export const MINIMUM_DEPOSIT_DZD = 10000;
 export const DEFAULT_USD_RATE_DZD = 255;
 export const DEFAULT_FREIGHT_PER_KG_DZD = 5000;
+/** Flat admin benefit added on top of the formula (shown inside the approximate price). */
+export const DEFAULT_BENEFIT_DZD = 2000;
 
 /** Legacy (pre-USD) settings keys — kept so old installs still migrate. */
 export const DEFAULT_FX_RATE_RMB_DZD = 38;
@@ -26,6 +28,8 @@ export interface PriceInput {
   cnyPerUsd: number;
   usdRateDzd: number;
   freightPerKgDzd: number;
+  /** Flat benefit added to the formula total (default 0 = formula only). */
+  benefitDzd?: number;
 }
 
 export interface PriceQuote {
@@ -36,6 +40,7 @@ export interface PriceQuote {
   productTotalDzd: number;
   weightKg: number;
   freightDzd: number;
+  benefitDzd: number;
   totalAmountDzd: number;
   depositAmountDzd: number;
   remainingBalanceDzd: number;
@@ -48,30 +53,16 @@ export interface PriceQuote {
 export function quotePrice(input: PriceInput): PriceQuote {
   const quantity = Math.max(1, Math.floor(input.quantity));
   const weightKg = Math.max(0, input.weightKg);
+  const benefitDzd = Math.max(0, Math.round(input.benefitDzd ?? 0));
   const unitPriceUsd = input.priceRmb / input.cnyPerUsd;
   const unitPriceDzd = Math.round(unitPriceUsd * input.usdRateDzd);
   const productTotalDzd = unitPriceDzd * quantity;
   const freightDzd = Math.round(weightKg * input.freightPerKgDzd);
-  const totalAmountDzd = productTotalDzd + freightDzd;
+  const totalAmountDzd = productTotalDzd + freightDzd + benefitDzd;
 
-  if (totalAmountDzd <= MINIMUM_DEPOSIT_DZD) {
-    return {
-      unitPriceRmb: input.priceRmb,
-      quantity,
-      unitPriceUsd,
-      unitPriceDzd,
-      productTotalDzd,
-      weightKg,
-      freightDzd,
-      totalAmountDzd,
-      depositAmountDzd: totalAmountDzd,
-      remainingBalanceDzd: 0,
-      requiresFullPaymentUpfront: true,
-      cnyPerUsd: input.cnyPerUsd,
-      usdRateDzd: input.usdRateDzd,
-      freightPerKgDzd: input.freightPerKgDzd,
-    };
-  }
+  // Deposit is always 10000 DZD, except tiny orders paid fully upfront.
+  const depositAmountDzd = Math.min(totalAmountDzd, MINIMUM_DEPOSIT_DZD);
+  const requiresFullPaymentUpfront = totalAmountDzd <= MINIMUM_DEPOSIT_DZD;
 
   return {
     unitPriceRmb: input.priceRmb,
@@ -81,10 +72,11 @@ export function quotePrice(input: PriceInput): PriceQuote {
     productTotalDzd,
     weightKg,
     freightDzd,
+    benefitDzd,
     totalAmountDzd,
-    depositAmountDzd: MINIMUM_DEPOSIT_DZD,
-    remainingBalanceDzd: totalAmountDzd - MINIMUM_DEPOSIT_DZD,
-    requiresFullPaymentUpfront: false,
+    depositAmountDzd,
+    remainingBalanceDzd: totalAmountDzd - depositAmountDzd,
+    requiresFullPaymentUpfront,
     cnyPerUsd: input.cnyPerUsd,
     usdRateDzd: input.usdRateDzd,
     freightPerKgDzd: input.freightPerKgDzd,

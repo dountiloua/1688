@@ -123,6 +123,11 @@ const STRINGS: Dict = {
     fr: "✅ Commande reçue avec succès !",
     en: "✅ Your order has been received!",
   },
+  approxNote: {
+    ar: "💡 هذا سعر تقريبي — سيراجع المشرف طلبك ويرسل لك الفاتورة النهائية بالسعر النهائي قريباً.",
+    fr: "💡 Ceci est un prix approximatif — un admin va vérifier votre commande et vous envoyer la facture finale.",
+    en: "💡 This is an approximate price — an admin will review your order and send the final invoice shortly.",
+  },
   paymentNote: {
     ar: "💳 تعليمات الدفع (تحويل بنكي / بريدي موب / الدفع عند الاستلام) سيرسلها إليك المشرف قريباً. الدفع الحقيقي عبر SATIM غير متوفر بعد.",
     fr: "💳 Les instructions de paiement (virement / BaridiMob / à la livraison) vous seront envoyées par un admin. L'intégration SATIM n'est pas encore en ligne.",

@@ -11,13 +11,16 @@ import { timingSafeEqual } from "node:crypto";
 import * as http from "node:http";
 import type { Bot } from "grammy";
 import {
+  acceptOrder,
   countByStatus,
   deleteOrder,
+  getBenefit,
   getFreightPerKg,
   getOrderById,
   getUsdRate,
   isValidStatus,
   listOrders,
+  listPendingAcceptance,
   ORDER_STATUSES,
   setSetting,
   updateOrderStatus,
@@ -26,10 +29,12 @@ import {
 } from "./db.js";
 import { getCnyMode, getCnyPerUsd, type CnyRate } from "./fx.js";
 import { formatDzd } from "./i18n.js";
+import { invoiceMessage } from "./invoice.js";
 import type { MyContext } from "./session.js";
 import { translateVariant } from "./variantDict.js";
 
 const STATUS_COLORS: Record<OrderStatus, string> = {
+  PENDING_ACCEPTANCE: "#92400e",
   AWAITING_DEPOSIT: "#b45309",
   DEPOSIT_PAID: "#1d4ed8",
   FORWARDED_TO_SHIPPING_PARTNER: "#6d28d9",
@@ -206,7 +211,7 @@ function orderDetailCard(order: OrderRow, token: string): string {
         <tr><td>Deposit</td><td>${esc(formatDzd(order.depositAmountDzd))}</td></tr>
         <tr><td>Remaining</td><td>${esc(formatDzd(order.remainingBalanceDzd))}</td></tr>
       </table>
-      <p class="mut" style="margin:8px 0">Rates locked at order time: ${esc(String(order.cnyPerUsd || "—"))} ¥/$ • ${esc(String(order.usdRateDzd || "—"))} DZD/$</p>
+      <p class="mut" style="margin:8px 0">Rates locked at order time: ${esc(String(order.cnyPerUsd || "—"))} ¥/$ • ${esc(String(order.usdRateDzd || "—"))} DZD/$${order.approxTotalDzd && order.approxTotalDzd !== order.totalAmountDzd ? ` • ≈ approx shown: ${esc(formatDzd(order.approxTotalDzd))}` : ""}</p>
       <div class="rowflex">
         <code class="mark">${esc(mark)}</code>
         <button class="btn-ghost btn" onclick="copyMark(this,'${jsStr(mark)}')">⧉ Copy</button>
@@ -235,9 +240,11 @@ function deleteConfirmCard(order: OrderRow, token: string): string {
 function dashboardPage(opts: {
   token: string;
   orders: OrderRow[];
+  pending: OrderRow[];
   counts: Record<OrderStatus, number>;
   usdRate: number;
   freightPerKg: number;
+  benefit: number;
   cny: CnyRate | null;
   cnyMode: string;
   activeStatus: string;
@@ -245,7 +252,7 @@ function dashboardPage(opts: {
   deleteTarget: OrderRow | null;
   notice: string;
 }): string {
-  const { token, orders, counts, usdRate, freightPerKg, cny, cnyMode, activeStatus, view, deleteTarget, notice } =
+  const { token, orders, pending, counts, usdRate, freightPerKg, benefit, cny, cnyMode, activeStatus, view, deleteTarget, notice } =
     opts;
   const totalOrders = Object.values(counts).reduce((a, b) => a + b, 0);
 
@@ -278,6 +285,22 @@ function dashboardPage(opts: {
   </div></div>
   <div class="wrap">
     ${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
+    ${pending.length > 0 ? `<div class="card pad" style="margin-bottom:14px;border:2px solid #f59e0b">
+      <h3>⏳ Pending acceptance (${pending.length}) — set the final price to invoice the customer</h3>
+      ${pending.map((o) => `<div class="rowflex" style="justify-content:space-between;border-top:1px solid var(--line);padding:10px 0">
+        <div class="prodcell">${thumb(o.imageUrl, o.productUrl, o.titleRaw)}<div>
+          <a class="ptitle" href="${esc(o.productUrl)}" target="_blank" rel="noreferrer">${esc(o.titleRaw.slice(0, 70))} ↗</a>
+          <div class="mut">#${o.id} • ${esc(o.fullName)} • ${esc(o.phone)} • ×${o.quantity || 1}${o.variantSummary ? ` • ${esc(o.variantSummary.slice(0, 40))}` : ""}</div>
+          <div>Approx shown: <b>${esc(formatDzd(o.approxTotalDzd || o.totalAmountDzd))}</b></div>
+        </div></div>
+        <form class="inline" method="POST" action="/admin/accept">
+          <input type="hidden" name="token" value="${esc(token)}" />
+          <input type="hidden" name="id" value="${o.id}" />
+          <input name="final" value="${o.approxTotalDzd || o.totalAmountDzd}" inputmode="numeric" style="width:130px" title="Final price DZD" />
+          <button type="submit">✅ Accept & invoice</button>
+        </form>
+      </div>`).join("")}
+    </div>` : ""}
     <div class="stats">
       ${Object.entries(counts).map(([s, n]) => `<div class="card stat">${statusBadge(s as OrderStatus)} <b>${n}</b></div>`).join("")}
     </div>
@@ -288,6 +311,7 @@ function dashboardPage(opts: {
           <label>USD rate (DZD per $)<input name="usd_rate" value="${usdRate}" inputmode="decimal" /></label>
           <label>CNY→USD ("auto" or fixed)<input name="cny" value="${cnyMode === "manual" ? esc(String(cny?.rate ?? "")) : "auto"}" inputmode="text" /></label>
           <label>Freight (DZD / kg)<input name="freight_kg" value="${freightPerKg}" inputmode="numeric" /></label>
+          <label>Benefit flat (DZD)<input name="benefit" value="${benefit}" inputmode="numeric" /></label>
           <button type="submit">Save (new orders only)</button>
         </div>
       </form>
@@ -400,6 +424,41 @@ async function handle(
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/admin/accept") {
+    const body = await parseBody(req);
+    const token = body.get("token") ?? "";
+    if (!isAuthorized(token)) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("forbidden");
+      return;
+    }
+    const id = Number(body.get("id"));
+    const final = Number(body.get("final"));
+    if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(final) || final <= 0) {
+      redirect(res, token, "Invalid order id or final price.");
+      return;
+    }
+    const existing = getOrderById(id);
+    if (!existing) {
+      redirect(res, token, `Order #${body.get("id")} not found.`);
+      return;
+    }
+    if (existing.status !== "PENDING_ACCEPTANCE") {
+      redirect(res, token, `Order #${id} is ${existing.status}, not pending.`);
+      return;
+    }
+    const updated = acceptOrder(id, final);
+    if (updated) {
+      try {
+        await bot.api.sendMessage(updated.telegramUserId, invoiceMessage(updated));
+      } catch (notifyErr) {
+        console.error("dashboard invoice notify failed:", notifyErr);
+      }
+    }
+    redirect(res, token, updated ? `✅ Order #${id} accepted at ${formatDzd(updated.totalAmountDzd)}. Invoice sent.` : `Order #${id} could not be accepted.`, `view=${id}`);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/admin/delete") {
     const body = await parseBody(req);
     const token = body.get("token") ?? "";
@@ -454,6 +513,11 @@ async function handle(
       setSetting("freight_per_kg_dzd", String(Math.round(freightKg)));
       msgs.push(`freight → ${formatDzd(freightKg)}/kg`);
     }
+    const benefit = Number(body.get("benefit"));
+    if (Number.isFinite(benefit) && benefit >= 0 && benefit <= 10000000) {
+      setSetting("benefit_dzd", String(Math.round(benefit)));
+      msgs.push(`benefit → ${formatDzd(benefit)}`);
+    }
     redirect(res, token, msgs.length > 0 ? msgs.join(" • ") + " (new orders only)." : "No valid values — nothing changed.");
     return;
   }
@@ -494,9 +558,11 @@ async function handle(
       dashboardPage({
         token,
         orders,
+        pending: listPendingAcceptance(50),
         counts: countByStatus(),
         usdRate: getUsdRate(),
         freightPerKg: getFreightPerKg(),
+        benefit: getBenefit(),
         cny,
         cnyMode: getCnyMode(),
         activeStatus,

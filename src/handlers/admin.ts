@@ -1,16 +1,20 @@
 import { Bot, InlineKeyboard } from "grammy";
 import {
+  acceptOrder,
+  getBenefit,
   getFreightPerKg,
   getOrderById,
   getUsdRate,
   isValidStatus,
   listAwaitingDeposit,
+  listPendingAcceptance,
   setSetting,
   updateOrderStatus,
   type OrderStatus,
 } from "../db.js";
 import { getCnyMode, getCnyPerUsd } from "../fx.js";
 import { formatDzd } from "../i18n.js";
+import { invoiceMessage } from "../invoice.js";
 import type { MyContext } from "../session.js";
 
 function isAdmin(ctx: MyContext): boolean {
@@ -118,6 +122,9 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
             ? `⚖️ ${o.weightKg} kg → freight ${formatDzd(o.freightDzd)}`
             : `⚖️ Weight unknown → freight TBD`,
           `💰 Total ${formatDzd(o.totalAmountDzd)} • Deposit ${formatDzd(o.depositAmountDzd)} • Rest ${formatDzd(o.remainingBalanceDzd)}`,
+          o.approxTotalDzd && o.approxTotalDzd !== o.totalAmountDzd
+            ? `≈ Approx shown to customer: ${formatDzd(o.approxTotalDzd)}`
+            : null,
           `HK Shipping / Mark: ${o.shippingMark}`,
           `🔗 ${o.productUrl}`,
           `🕒 ${o.createdAt}`,
@@ -212,11 +219,97 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
           `• CNY→USD: ${cny.rate.toFixed(4)} (${cny.source}, mode ${getCnyMode()})`,
           `• USD→DZD: ${getUsdRate()}`,
           `• Freight: ${formatDzd(getFreightPerKg())} / kg`,
+          `• Benefit: ${formatDzd(getBenefit())} flat`,
         ].join("\n"),
       );
     } catch (err) {
       console.error("/rates failed:", err);
       await ctx.reply("❌ Could not load rates.");
+    }
+  });
+
+  bot.command("setbenefit", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const arg = ctx.message?.text.split(/\s+/)[1];
+    const amount = Number(arg);
+    if (!arg || !Number.isFinite(amount) || amount < 0 || amount > 10000000) {
+      await ctx.reply(
+        `Usage: /setbenefit <amount_dzd>\nCurrent: ${formatDzd(getBenefit())} (new orders only).`,
+      );
+      return;
+    }
+    try {
+      setSetting("benefit_dzd", String(Math.round(amount)));
+      await ctx.reply(
+        `✅ Benefit updated to ${formatDzd(amount)} for new orders.`,
+      );
+    } catch (err) {
+      console.error("/setbenefit failed:", err);
+      await ctx.reply("❌ Failed to update benefit.");
+    }
+  });
+
+  bot.command("pending", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    try {
+      const orders = listPendingAcceptance(20);
+      if (orders.length === 0) {
+        await ctx.reply("📭 No orders pending acceptance.");
+        return;
+      }
+      for (const o of orders) {
+        await ctx.reply(
+          [
+            `#${o.id} • ${o.shippingMark || "no mark yet"} ⏳`,
+            `👤 ${o.fullName} • ${o.phone}`,
+            `🧾 ${o.titleRaw.slice(0, 80)} ×${o.quantity || 1}`,
+            `💰 Approx ${formatDzd(o.approxTotalDzd || o.totalAmountDzd)}`,
+            `Accept: /accept ${o.id} <final_price_dzd>`,
+          ].join("\n"),
+        );
+      }
+    } catch (err) {
+      console.error("/pending failed:", err);
+      await ctx.reply("❌ Failed to list pending orders.");
+    }
+  });
+
+  bot.command("accept", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const parts = (ctx.message?.text ?? "").split(/\s+/);
+    const id = Number(parts[1]);
+    const final = Number(parts[2]);
+    if (!parts[1] || !Number.isInteger(id) || id <= 0 || !Number.isFinite(final) || final <= 0) {
+      await ctx.reply("Usage: /accept <order_id> <final_price_dzd>");
+      return;
+    }
+    try {
+      const order = getOrderById(id);
+      if (!order) {
+        await ctx.reply(`Order #${id} not found.`);
+        return;
+      }
+      if (order.status !== "PENDING_ACCEPTANCE") {
+        await ctx.reply(`Order #${id} is ${order.status}, not pending acceptance.`);
+        return;
+      }
+      const updated = acceptOrder(id, final);
+      if (!updated) {
+        await ctx.reply(`❌ Failed to accept order #${id}.`);
+        return;
+      }
+      await ctx.reply(
+        `✅ Order #${id} accepted at ${formatDzd(updated.totalAmountDzd)} (deposit ${formatDzd(updated.depositAmountDzd)}). Invoice sent.`,
+      );
+      try {
+        await ctx.api.sendMessage(updated.telegramUserId, invoiceMessage(updated));
+      } catch (notifyErr) {
+        console.error("invoice notify failed:", notifyErr);
+        await ctx.reply("⚠️ Accepted but invoice DM failed.");
+      }
+    } catch (err) {
+      console.error("/accept failed:", err);
+      await ctx.reply("❌ Failed to accept order.");
     }
   });
 
@@ -227,7 +320,7 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
     const newStatus = parts[2];
     if (!parts[1] || !Number.isInteger(id) || id <= 0 || !newStatus) {
       await ctx.reply(
-        "Usage: /advance <order_id> <new_status>\nStatuses: AWAITING_DEPOSIT, DEPOSIT_PAID, FORWARDED_TO_SHIPPING_PARTNER, IN_TRANSIT, DELIVERED, CANCELLED",
+        "Usage: /advance <order_id> <new_status>\nStatuses: PENDING_ACCEPTANCE, AWAITING_DEPOSIT, DEPOSIT_PAID, FORWARDED_TO_SHIPPING_PARTNER, IN_TRANSIT, DELIVERED, CANCELLED",
       );
       return;
     }

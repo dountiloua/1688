@@ -2,13 +2,16 @@ import Database from "better-sqlite3";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  DEFAULT_BENEFIT_DZD,
   DEFAULT_FREIGHT_ESTIMATE_DZD,
   DEFAULT_FREIGHT_PER_KG_DZD,
   DEFAULT_FX_RATE_RMB_DZD,
   DEFAULT_USD_RATE_DZD,
+  MINIMUM_DEPOSIT_DZD,
 } from "./pricing.js";
 
 export type OrderStatus =
+  | "PENDING_ACCEPTANCE"
   | "AWAITING_DEPOSIT"
   | "DEPOSIT_PAID"
   | "FORWARDED_TO_SHIPPING_PARTNER"
@@ -17,6 +20,7 @@ export type OrderStatus =
   | "CANCELLED";
 
 export const ORDER_STATUSES: OrderStatus[] = [
+  "PENDING_ACCEPTANCE",
   "AWAITING_DEPOSIT",
   "DEPOSIT_PAID",
   "FORWARDED_TO_SHIPPING_PARTNER",
@@ -44,6 +48,9 @@ export interface OrderRow {
   freightDzd: number;
   cnyPerUsd: number;
   usdRateDzd: number;
+  /** Approximate total shown pre-acceptance (formula + benefit). */
+  approxTotalDzd: number;
+  /** Final total locked by the admin at acceptance (invoice). */
   totalAmountDzd: number;
   depositAmountDzd: number;
   remainingBalanceDzd: number;
@@ -70,6 +77,9 @@ export interface NewOrder {
   freightDzd: number;
   cnyPerUsd: number;
   usdRateDzd: number;
+  /** Approximate total shown pre-acceptance (formula + benefit). */
+  approxTotalDzd: number;
+  /** Final total locked by the admin at acceptance (invoice). */
   totalAmountDzd: number;
   depositAmountDzd: number;
   remainingBalanceDzd: number;
@@ -150,6 +160,9 @@ function migrate(database: Database.Database): void {
   if (!getSetting.get("cny_per_usd_mode")) {
     setSetting.run("cny_per_usd_mode", "auto");
   }
+  if (!getSetting.get("benefit_dzd")) {
+    setSetting.run("benefit_dzd", String(DEFAULT_BENEFIT_DZD));
+  }
 
   // Order columns for quantity / weight-based freight (added after v1)
   const cols = database
@@ -180,6 +193,9 @@ function migrate(database: Database.Database): void {
   if (!hasCol("imageUrl")) {
     database.exec("ALTER TABLE orders ADD COLUMN imageUrl TEXT NOT NULL DEFAULT ''");
   }
+  if (!hasCol("approxTotalDzd")) {
+    database.exec("ALTER TABLE orders ADD COLUMN approxTotalDzd INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function getSetting(key: string): string | null {
@@ -201,6 +217,13 @@ export function getFxRate(): number {
   const raw = getSetting("fx_rate_rmb_dzd");
   const n = raw ? Number(raw) : NaN;
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_FX_RATE_RMB_DZD;
+}
+
+/** Flat admin benefit added to the formula total (default 2000). New orders only. */
+export function getBenefit(): number {
+  const raw = getSetting("benefit_dzd");
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : DEFAULT_BENEFIT_DZD;
 }
 
 /** DZD per 1 USD (default 255). Applies to new orders only. */
@@ -236,13 +259,13 @@ export function createOrder(input: NewOrder): OrderRow {
       telegramUserId, fullName, phone, wilaya, postalCode, address,
       productUrl, titleRaw, priceRmb, imageUrl, variantSummary, fxRateRmbDzd,
       quantity, weightKg, freightDzd, cnyPerUsd, usdRateDzd,
-      totalAmountDzd, depositAmountDzd, remainingBalanceDzd,
+      approxTotalDzd, totalAmountDzd, depositAmountDzd, remainingBalanceDzd,
       shippingMark, status
     ) VALUES (
       @telegramUserId, @fullName, @phone, @wilaya, @postalCode, @address,
       @productUrl, @titleRaw, @priceRmb, @imageUrl, @variantSummary, @fxRateRmbDzd,
       @quantity, @weightKg, @freightDzd, @cnyPerUsd, @usdRateDzd,
-      @totalAmountDzd, @depositAmountDzd, @remainingBalanceDzd,
+      @approxTotalDzd, @totalAmountDzd, @depositAmountDzd, @remainingBalanceDzd,
       '', @status
     )
   `);
@@ -270,6 +293,31 @@ export function listAwaitingDeposit(limit = 20): OrderRow[] {
       "SELECT * FROM orders WHERE status = 'AWAITING_DEPOSIT' ORDER BY id DESC LIMIT ?",
     )
     .all(limit) as OrderRow[];
+}
+
+/** Orders waiting for the admin to lock a final price + accept. */
+export function listPendingAcceptance(limit = 50): OrderRow[] {
+  return getDb()
+    .prepare(
+      "SELECT * FROM orders WHERE status = 'PENDING_ACCEPTANCE' ORDER BY id DESC LIMIT ?",
+    )
+    .all(limit) as OrderRow[];
+}
+
+/**
+ * Accept an order: lock the final total, recompute the (always-10000)
+ * deposit against it, and move to AWAITING_DEPOSIT for the invoice.
+ */
+export function acceptOrder(id: number, finalTotalDzd: number): OrderRow | null {
+  const total = Math.max(0, Math.round(finalTotalDzd));
+  const deposit = Math.min(total, MINIMUM_DEPOSIT_DZD);
+  getDb()
+    .prepare(
+      `UPDATE orders SET totalAmountDzd = ?, depositAmountDzd = ?,
+       remainingBalanceDzd = ?, status = 'AWAITING_DEPOSIT' WHERE id = ?`,
+    )
+    .run(total, deposit, total - deposit, id);
+  return getOrderById(id);
 }
 
 /** All orders, newest first, optionally filtered by status (for the dashboard). */

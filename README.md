@@ -72,7 +72,7 @@ npm run dev
 Customer:
 
 - `/start` — welcome (Arabic default, `/lang` for FR/EN)
-- Send a `1688.com` link → preview (RMB price → DZD price + shipping/kg note, no exchange-rate internals) → ✅ confirm → variant options as tap-buttons when the page declares them (🎨 color → 📏 size → …; per-variant price applied automatically) → quantity → estimated weight (kg, or 0 if unknown) → name → phone → wilaya → address
+- Send a `1688.com` link → preview (RMB price → DZD price + shipping/kg note, no exchange-rate internals) → ✅ confirm → quantity → variant options as tap-buttons when the page declares them (🎨 color → 📏 size → …; per-variant price applied automatically) → weight → name → phone → wilaya → **postal code** → address → **approximate** total (formula + benefit). The admin then locks the **final price** and the customer receives the **invoice** by DM. Deposit is always 10,000 DZD.
 - `/myorders` — order history + status
 - `/cancel` — abort the current flow
 
@@ -83,6 +83,9 @@ Admin (`ADMIN_TELEGRAM_ID` only):
 - `/setusd <rate>` — DZD per 1 USD for new orders (default 255)
 - `/setcny auto|<rate>` — CNY→USD: live auto rate (free API, cached 12h) or fixed manual rate
 - `/setfreightkg <amount>` — freight DZD per kg for new orders (default 5000)
+- `/setbenefit <amount>` — flat benefit per order for new orders (default 2000)
+- `/pending` — orders waiting for acceptance
+- `/accept <id> <final_price>` — lock final price, move to AWAITING_DEPOSIT, DM the invoice
 - `/rates` — show current pricing inputs
 - `/advance <order_id> <new_status>` — move lifecycle + notify customer
 
@@ -95,9 +98,15 @@ unitUsd      = priceRmb / cnyPerUsd          # live CNY→USD (free API, 12h cac
 unitDzd      = round(unitUsd * usdRateDzd)    # default 255 DZD per USD
 productTotal = unitDzd * quantity
 freight      = round(weightKg * 5000)         # per-kg rate, admin-editable
-total        = productTotal + freight
+total        = productTotal + freight + benefit   # benefit default 2000
 total <= 10000 → full payment upfront, else 10000 deposit + remainder
 ```
+
+Two-stage pricing: the bot shows the customer an **approximate** total
+(formula + benefit). New orders start as `PENDING_ACCEPTANCE`. The admin
+locks the **final price** in the panel (prefilled with the approximate) or
+via `/accept <id> <final>` — the customer instantly receives the **invoice**
+DM and the order moves to `AWAITING_DEPOSIT`. Deposit is always 10,000 DZD.
 
 Two smarts on top of that:
 
@@ -120,7 +129,8 @@ Same process, no extra service: open `http://localhost:3000/admin`
 `ADMIN_PANEL_TOKEN`. You get:
 
 - **Stats row** — order counts per status at a glance
-- **Pricing settings** — USD rate, CNY→USD (auto/live or fixed), freight/kg (new orders only)
+- **Pricing settings** — USD rate, CNY→USD (auto/live or fixed), freight/kg, benefit (new orders only)
+- **⏳ Pending acceptance** — orders awaiting review, each with a prefilled final-price field; accepting DMs the invoice to the customer
 - **Order list** — newest first, filterable by status, with shipping marks
 - **Order detail** (`View`) — full customer/address/money info plus the
   `HK Shipping / Mark:` line to copy to the freight partner

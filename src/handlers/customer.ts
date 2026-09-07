@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard } from "grammy";
 import {
   createOrder,
+  getBenefit,
   getFreightPerKg,
   getUsdRate,
   listOrdersByUser,
@@ -412,6 +413,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             cnyPerUsd: cny,
             usdRateDzd: usdRate,
             freightPerKgDzd: freightPerKg,
+            benefitDzd: getBenefit(),
           });
           const variantSummary = ctx.session.draftPicks
             .map((p) => p.value)
@@ -436,10 +438,11 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             freightDzd: quote.freightDzd,
             cnyPerUsd: cny,
             usdRateDzd: usdRate,
+            approxTotalDzd: quote.totalAmountDzd,
             totalAmountDzd: quote.totalAmountDzd,
             depositAmountDzd: quote.depositAmountDzd,
             remainingBalanceDzd: quote.remainingBalanceDzd,
-            status: "AWAITING_DEPOSIT",
+            status: "PENDING_ACCEPTANCE",
           });
 
           ctx.session.step = "idle";
@@ -471,13 +474,14 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
               `💴 سعر القطعة: ${unitRmb} RMB ≈ ${formatDzd(quote.unitPriceDzd)}`,
               `📦 مجموع المنتج (${quote.quantity}): ${formatDzd(quote.productTotalDzd)}`,
               shippingLine,
-              `💰 المجموع الإجمالي: ${formatDzd(order.totalAmountDzd)}`,
+              `💰 المجموع التقريبي: ${formatDzd(order.totalAmountDzd)}`,
               quote.requiresFullPaymentUpfront
                 ? `💳 الدفع المسبق الكامل: ${formatDzd(order.depositAmountDzd)}`
-                : `💳 العربون: ${formatDzd(order.depositAmountDzd)} • الباقي: ${formatDzd(order.remainingBalanceDzd)}`,
+                : `💳 العربون: ${formatDzd(order.depositAmountDzd)} • الباقي التقريبي: ${formatDzd(order.remainingBalanceDzd)}`,
               `🏷️ Shipping Mark: ${order.shippingMark}`,
-              `📌 الحالة: ${order.status}`,
+              `📌 الحالة: قيد مراجعة المشرف ⏳`,
               ``,
+              t(lang, "approxNote"),
               t(lang, "paymentNote"),
             ].join("\n"),
           );
@@ -488,7 +492,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             try {
               await ctx.api.sendMessage(
                 Number(adminId),
-                `🆕 New order #${order.id}\n${order.titleRaw.slice(0, 100)}\n${formatDzd(order.totalAmountDzd)} • ${order.shippingMark}\nUse /order ${order.id}`,
+                `🆕 New order #${order.id} (needs acceptance)\n${order.titleRaw.slice(0, 100)}\nApprox ${formatDzd(order.totalAmountDzd)} • ${order.shippingMark}\nAccept: panel or /accept ${order.id} <final_price>`,
               );
             } catch (notifyErr) {
               console.error("admin notify failed:", notifyErr);
