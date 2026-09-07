@@ -634,9 +634,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
               `📦 مجموع المنتج (${quote.quantity}): ${formatDzd(quote.productTotalDzd)}`,
               shippingLine,
               `💰 المجموع التقريبي: ${formatDzd(order.totalAmountDzd)}`,
-              quote.requiresFullPaymentUpfront
-                ? `💳 الدفع المسبق الكامل: ${formatDzd(order.depositAmountDzd)}`
-                : `💳 العربون: ${formatDzd(order.depositAmountDzd)} • الباقي التقريبي: ${formatDzd(order.remainingBalanceDzd)}`,
+              `⏳ السعر النهائي وطريقة الدفع يحددهما المشرف لاحقاً`,
               `🏷️ Shipping Mark: ${order.shippingMark}`,
               `📌 الحالة: قيد مراجعة المشرف ⏳`,
               ``,
