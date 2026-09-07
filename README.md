@@ -22,6 +22,7 @@ freight company — the bot only does order intake, pricing, and status tracking
 2. Send `/newbot`, pick a name + username.
 3. Copy the HTTP API token it gives you.
 4. Find your Telegram user id by messaging **@userinfobot** (needed for `ADMIN_TELEGRAM_ID`).
+5. **Notifications bot (recommended):** message **@BotFather** → `/newbot` again for a *second, private* bot → put its token in `NOTIFY_BOT_TOKEN` and your user id in `NOTIFY_CHAT_ID`. All admin alerts (new orders, updates) go there instead of the public bot. **Important:** open the new bot once and press START, otherwise it cannot message you. While unset, alerts fall back to the main bot.
 
 ### 2. Run locally
 

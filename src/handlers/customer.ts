@@ -8,6 +8,7 @@ import {
 } from "../db.js";
 import { getCnyPerUsd } from "../fx.js";
 import { formatDzd, t } from "../i18n.js";
+import { notifyAdmin } from "../notify.js";
 import { tierPriceFor, type SkuEntry, type VariantOption } from "../scraper/parse1688.js";
 import { translatePicks, translateVariant } from "../variantDict.js";
 import {
@@ -643,14 +644,17 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             ].join("\n"),
           );
 
-          // Notify admin (fire-and-forget, never breaks customer flow)
+          // Notify admin on the PRIVATE notifications bot (fire-and-forget,
+          // never breaks customer flow; falls back to this bot if unset).
           const adminId = process.env.ADMIN_TELEGRAM_ID;
           if (adminId) {
+            const alert =
+              `🆕 New order #${order.id} (needs acceptance)\n${order.titleRaw.slice(0, 100)}\nApprox ${formatDzd(order.totalAmountDzd)} • ${order.shippingMark}\nAccept: panel or /accept ${order.id} <final_price>`;
             try {
-              await ctx.api.sendMessage(
-                Number(adminId),
-                `🆕 New order #${order.id} (needs acceptance)\n${order.titleRaw.slice(0, 100)}\nApprox ${formatDzd(order.totalAmountDzd)} • ${order.shippingMark}\nAccept: panel or /accept ${order.id} <final_price>`,
-              );
+              const handled = await notifyAdmin(alert);
+              if (!handled) {
+                await ctx.api.sendMessage(Number(adminId), alert);
+              }
             } catch (notifyErr) {
               console.error("admin notify failed:", notifyErr);
             }
