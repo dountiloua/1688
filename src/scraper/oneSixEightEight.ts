@@ -15,13 +15,18 @@ import {
   type VariantOption,
 } from "./parse1688.js";
 
+export type SourceCurrency = "CNY" | "USD";
+
 export interface Scraped1688Product {
   title: string;
+  /** Unit price in SOURCE currency (RMB for 1688, USD for Alibaba). */
   priceRmb: number;
+  currency: SourceCurrency;
   imageUrl: string;
   moq: number | null;
   variants: VariantOption[];
   skus: SkuEntry[];
+  /** Quantity tiers, priced in SOURCE currency. */
   tiers: PriceTier[];
   url: string;
 }
@@ -80,6 +85,15 @@ export function is1688Url(url: string): boolean {
   try {
     const u = new URL(url.trim());
     return /(^|\.)1688\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isAlibabaUrl(url: string): boolean {
+  try {
+    const u = new URL(url.trim());
+    return /(^|\.)alibaba\.com$/i.test(u.hostname);
   } catch {
     return false;
   }
@@ -289,7 +303,7 @@ async function scrapeOnce(
       // ignore
     }
 
-    return { title: data.title.slice(0, 500), priceRmb, imageUrl, moq, variants, skus, tiers, url };
+    return { title: data.title.slice(0, 500), priceRmb, currency: "CNY", imageUrl, moq, variants, skus, tiers, url };
   } catch (err) {
     if (err instanceof Product1688ScrapeError) throw err;
     throw new Product1688ScrapeError(

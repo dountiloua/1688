@@ -20,15 +20,17 @@
  */
 import {
   is1688Url,
+  isAlibabaUrl,
   Product1688ScrapeError,
   scrape1688Product as scrapeViaPlaywright,
   type Scraped1688Product,
 } from "./oneSixEightEight.js";
 import { scrape1688ViaOxylabs } from "./oxylabs.js";
+import { scrapeAlibabaProduct } from "./alibaba.js";
 
 export type ScraperProvider = "local" | "playwright" | "oxylabs" | "api";
 export type { Scraped1688Product };
-export { is1688Url, Product1688ScrapeError };
+export { is1688Url, isAlibabaUrl, Product1688ScrapeError };
 
 type Engine = "local" | "api";
 
@@ -81,10 +83,37 @@ function apiReady(): boolean {
 export async function scrape1688Product(
   url: string,
 ): Promise<Scraped1688Product> {
-  if (!is1688Url(url.trim())) {
+  const clean = url.trim();
+
+  // Alibaba: API-only in v1 (local browser path is 1688-tuned).
+  if (isAlibabaUrl(clean)) {
+    if (!apiReady()) {
+      throw new Product1688ScrapeError(
+        "Alibaba links need the Oxylabs API (OXYLABS_USERNAME / OXYLABS_PASSWORD are not set).",
+        clean,
+      );
+    }
+    const started = Date.now();
+    try {
+      const result = await scrapeAlibabaProduct(clean);
+      console.log(
+        `Scrape OK via api (alibaba) in ${((Date.now() - started) / 1000).toFixed(1)}s`,
+      );
+      return result;
+    } catch (err) {
+      if (err instanceof Product1688ScrapeError) throw err;
+      throw new Product1688ScrapeError(
+        `Alibaba scrape failed: ${(err as Error)?.message ?? String(err)}`,
+        clean,
+        { cause: err },
+      );
+    }
+  }
+
+  if (!is1688Url(clean)) {
     throw new Product1688ScrapeError(
-      "URL is not a 1688.com product link.",
-      url.trim(),
+      "URL is not a 1688.com or alibaba.com product link.",
+      clean,
     );
   }
 

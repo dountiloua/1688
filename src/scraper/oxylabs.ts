@@ -7,6 +7,7 @@
  *
  * Implements the same interface as `./oneSixEightEight.ts` (Playwright),
  * so the two providers are interchangeable — see `./index.ts`.
+ * `fetchOxylabsHtml` is also reused by the Alibaba provider.
  */
 import {
   is1688Url,
@@ -40,18 +41,11 @@ function getCredentials(): { username: string; password: string } {
   return { username, password };
 }
 
-export async function scrape1688ViaOxylabs(
-  url: string,
+/** Rendered page HTML for any URL via Oxylabs (shared by 1688 + Alibaba). */
+export async function fetchOxylabsHtml(
+  cleanUrl: string,
   opts?: { timeoutMs?: number },
-): Promise<Scraped1688Product> {
-  const cleanUrl = url.trim();
-  if (!is1688Url(cleanUrl)) {
-    throw new Product1688ScrapeError(
-      "URL is not a 1688.com product link.",
-      cleanUrl,
-    );
-  }
-
+): Promise<string> {
   const { username, password } = getCredentials();
   const timeoutMs =
     opts?.timeoutMs ?? Number(process.env.OXYLABS_TIMEOUT_MS ?? 180000);
@@ -69,7 +63,7 @@ export async function scrape1688ViaOxylabs(
       body: JSON.stringify({
         source: "universal",
         url: cleanUrl,
-        render: "html", // 1688 prices are JS-rendered; needed
+        render: "html", // marketplace prices are JS-rendered; needed
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -116,20 +110,36 @@ export async function scrape1688ViaOxylabs(
   const result = data.results?.[0];
   if (!result?.content) {
     throw new Product1688ScrapeError(
-      `Oxylabs returned no page content (page status ${result?.status_code ?? "unknown"}). The 1688 page may be blocking datacenter IPs.`,
+      `Oxylabs returned no page content (page status ${result?.status_code ?? "unknown"}). The page may be blocking datacenter IPs.`,
       cleanUrl,
     );
   }
   if (result.status_code !== undefined && result.status_code !== 200) {
     throw new Product1688ScrapeError(
-      `1688 page returned HTTP ${result.status_code} via Oxylabs. Check the link.`,
+      `Page returned HTTP ${result.status_code} via Oxylabs. Check the link.`,
+      cleanUrl,
+    );
+  }
+  return result.content;
+}
+
+export async function scrape1688ViaOxylabs(
+  url: string,
+  opts?: { timeoutMs?: number },
+): Promise<Scraped1688Product> {
+  const cleanUrl = url.trim();
+  if (!is1688Url(cleanUrl)) {
+    throw new Product1688ScrapeError(
+      "URL is not a 1688.com product link.",
       cleanUrl,
     );
   }
 
+  const html = await fetchOxylabsHtml(cleanUrl, opts);
+
   try {
-    const parsed = parse1688ProductHtml(result.content, cleanUrl);
-    return { ...parsed, url: cleanUrl };
+    const parsed = parse1688ProductHtml(html, cleanUrl);
+    return { ...parsed, currency: "CNY", url: cleanUrl };
   } catch (err) {
     throw new Product1688ScrapeError(
       `Could not extract product data from the Oxylabs HTML: ${(err as Error)?.message ?? String(err)}`,

@@ -1,4 +1,5 @@
 import type { PriceTier, SkuEntry, VariantOption } from "./scraper/parse1688.js";
+import type { SourceCurrency } from "./scraper/oneSixEightEight.js";
 import type { Context, SessionFlavor } from "grammy";
 
 export type Lang = "ar" | "fr" | "en";
@@ -17,7 +18,9 @@ export type ConversationStep =
 export interface PendingProduct {
   url: string;
   title: string;
+  /** Unit price in SOURCE currency (RMB for 1688, USD for Alibaba). */
   priceRmb: number;
+  currency: SourceCurrency;
   imageUrl: string;
   moq: number | null;
   /** Unit price in DZD previewed for qty=1 (final total computed at order time). */

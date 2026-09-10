@@ -28,7 +28,7 @@ import {
   type OrderStatus,
 } from "./db.js";
 import { getCnyMode, getCnyPerUsd, type CnyRate } from "./fx.js";
-import { formatDzd } from "./i18n.js";
+import { formatDzd, unitPriceLabel } from "./i18n.js";
 import { invoiceMessage } from "./invoice.js";
 import type { MyContext } from "./session.js";
 import { translateVariant } from "./variantDict.js";
@@ -205,7 +205,7 @@ function orderDetailCard(order: OrderRow, token: string): string {
       <div class="rowflex" style="margin-bottom:10px">
         ${thumb(order.imageUrl, order.productUrl, order.titleRaw)}
         <div><a class="ptitle" style="font-size:15px" href="${esc(order.productUrl)}" target="_blank" rel="noreferrer">${esc(order.titleRaw)} ↗</a>
-        <div class="mut">×${order.quantity || 1} • ${esc(String(order.priceRmb))} RMB / unit</div></div>
+        <div class="mut">×${order.quantity || 1} • ${esc(unitPriceLabel(order.priceRmb, order.currency))} / unit</div></div>
       </div>
       ${order.variantSummary ? `<p style="margin:0 0 10px">🎨 ${variantLine(order.variantSummary)}</p>` : ""}
       <table class="money">
@@ -215,7 +215,7 @@ function orderDetailCard(order: OrderRow, token: string): string {
         <tr><td>Deposit</td><td>${esc(formatDzd(order.depositAmountDzd))}</td></tr>
         <tr><td>Remaining</td><td>${esc(formatDzd(order.remainingBalanceDzd))}</td></tr>
       </table>
-      <p class="mut" style="margin:8px 0">Rates locked at order time: ${esc(String(order.cnyPerUsd || "—"))} ¥/$ • ${esc(String(order.usdRateDzd || "—"))} DZD/$${order.approxTotalDzd && order.approxTotalDzd !== order.totalAmountDzd ? ` • ≈ approx shown: ${esc(formatDzd(order.approxTotalDzd))}` : ""}</p>
+      <p class="mut" style="margin:8px 0">Rates locked at order time: ${order.currency === "USD" ? `${esc(String(order.usdRateDzd || "—"))} DZD/$` : `${esc(String(order.cnyPerUsd || "—"))} ¥/$ • ${esc(String(order.usdRateDzd || "—"))} DZD/$`}${order.approxTotalDzd && order.approxTotalDzd !== order.totalAmountDzd ? ` • ≈ approx shown: ${esc(formatDzd(order.approxTotalDzd))}` : ""}</p>
       <div class="rowflex">
         <code class="mark">${esc(mark)}</code>
         <button class="btn-ghost btn" onclick="copyMark(this,'${jsStr(mark)}')">⧉ Copy</button>

@@ -4,9 +4,9 @@ type Dict = Record<string, Record<Lang, string>>;
 
 const STRINGS: Dict = {
   welcome: {
-    ar: "👋 مرحباً بك في خدمة الاستيراد من 1688 إلى الجزائر!\n\n📎 أرسل رابط منتج من 1688.com وسنعطيك السعر بالدينار ونجهز طلبك.\n\n🌍 Français / English available — type /lang to switch language.",
-    fr: "👋 Bienvenue dans le service d'import 1688 → Algérie !\n\n📎 Envoyez un lien produit 1688.com pour obtenir le prix en DZD.\n\nType /lang to switch language. /lang لتغيير اللغة.",
-    en: "👋 Welcome to the 1688 → Algeria sourcing service!\n\n📎 Send a 1688.com product link to get the DZD price and place an order.\n\nType /lang to switch language.",
+    ar: "👋 مرحباً بك في خدمة الاستيراد من 1688 و Alibaba إلى الجزائر!\n\n📎 أرسل رابط منتج من 1688.com أو alibaba.com وسنعطيك السعر بالدينار ونجهز طلبك.\n\n🌍 Français / English available — type /lang to switch language.",
+    fr: "👋 Bienvenue dans le service d'import 1688 & Alibaba → Algérie !\n\n📎 Envoyez un lien produit 1688.com ou alibaba.com pour obtenir le prix en DZD.\n\nType /lang to switch language. /lang لتغيير اللغة.",
+    en: "👋 Welcome to the 1688 & Alibaba → Algeria sourcing service!\n\n📎 Send a 1688.com or alibaba.com product link to get the DZD price and place an order.\n\nType /lang to switch language.",
   },
   chooseLang: {
     ar: "🌍 اختر اللغة / Choisissez la langue / Choose language:",
@@ -24,14 +24,14 @@ const STRINGS: Dict = {
     en: "🔎 Looking up the product...",
   },
   sendLinkHint: {
-    ar: "📎 أرسل رابط منتج من 1688.com (مثال: https://detail.1688.com/offer/....).",
-    fr: "📎 Envoyez un lien produit 1688.com.",
-    en: "📎 Send a 1688.com product link.",
+    ar: "📎 أرسل رابط منتج من 1688.com أو alibaba.com (مثال: https://detail.1688.com/offer/....).",
+    fr: "📎 Envoyez un lien produit 1688.com ou alibaba.com.",
+    en: "📎 Send a 1688.com or alibaba.com product link.",
   },
   badLink: {
-    ar: "❌ هذا الرابط لا يبدو رابط 1688.com صحيحاً. تأكد أنه يحتوي على 1688.com وأعد المحاولة.",
-    fr: "❌ Ce lien ne ressemble pas à un lien 1688.com valide.",
-    en: "❌ That doesn't look like a valid 1688.com link.",
+    ar: "❌ هذا الرابط لا يبدو رابط 1688.com أو alibaba.com صحيحاً. تأكد من الرابط وأعد المحاولة.",
+    fr: "❌ Ce lien ne ressemble pas à un lien 1688.com ou alibaba.com valide.",
+    en: "❌ That doesn't look like a valid 1688.com or alibaba.com link.",
   },
   scrapeFailed: {
     ar: "❌ تعذر جلب بيانات المنتج من هذا الرابط. قد تكون الصفحة محمية أو تتطلب تسجيل الدخول. تحقق من الرابط وحاول مجدداً.",
@@ -161,4 +161,9 @@ export function t(lang: Lang, key: keyof typeof STRINGS): string {
 
 export function formatDzd(n: number): string {
   return `${Math.round(n).toLocaleString("en-US")} DZD`;
+}
+
+/** "28 RMB" for 1688 orders, "$0.82 USD" for Alibaba orders. */
+export function unitPriceLabel(priceRmb: number, currency: string): string {
+  return currency === "USD" ? `$${priceRmb} USD` : `${priceRmb} RMB`;
 }

@@ -13,22 +13,29 @@ import { tierPriceFor, type SkuEntry, type VariantOption } from "../scraper/pars
 import { translatePicks, translateVariant } from "../variantDict.js";
 import {
   is1688Url,
+  isAlibabaUrl,
   Product1688ScrapeError,
   scrape1688Product,
 } from "../scraper/index.js";
+import type { SourceCurrency } from "../scraper/oneSixEightEight.js";
 import { quotePrice } from "../pricing.js";
 import type { Lang, MyContext, PendingProduct } from "../session.js";
 
 const URL_RE = /https?:\/\/[^\s]+/gi;
 
-function extract1688Url(text: string): string | null {
+function extractProductUrl(text: string): string | null {
   const matches = text.match(URL_RE);
   if (!matches) return null;
   for (const m of matches) {
     const cleaned = m.replace(/[)\].,;!؟،]+$/u, "");
-    if (is1688Url(cleaned)) return cleaned;
+    if (is1688Url(cleaned) || isAlibabaUrl(cleaned)) return cleaned;
   }
   return null;
+}
+
+/** "28 RMB" / "$0.82 USD" depending on source currency. */
+function sourcePriceLabel(priceRmb: number, currency: SourceCurrency): string {
+  return currency === "USD" ? `$${priceRmb} USD` : `${priceRmb} RMB`;
 }
 
 function productCaption(p: PendingProduct): string {
@@ -37,7 +44,7 @@ function productCaption(p: PendingProduct): string {
   const lines = [
     `🧾 ${p.title}`,
     ``,
-    `💴 السعر: ${p.priceRmb} RMB`,
+    `💴 السعر: ${sourcePriceLabel(p.priceRmb, p.currency)}`,
     `💰 السعر بالدينار (للقطعة): ${formatDzd(p.unitDzd)}`,
     p.moq !== null ? `📦 أقل كمية للطلب (MOQ): ${p.moq}` : null,
     p.variants.length > 0
@@ -167,11 +174,10 @@ async function unitDzdLine(
   qty: number,
 ): Promise<string> {
   if (!pending) return "";
-  const unitRmb =
-    tierPriceFor(pending.tiers, qty) ?? pending.resolvedPriceRmb;
   try {
-    const cny = await getCnyPerUsd();
-    const dzd = Math.round((unitRmb / cny.rate) * getUsdRate());
+    const base = tierPriceFor(pending.tiers, qty) ?? pending.resolvedPriceRmb;
+    const unitUsd = pending.currency === "USD" ? base : base / (await getCnyPerUsd()).rate;
+    const dzd = Math.round(unitUsd * getUsdRate());
     return `💴 سعر القطعة للكمية ${qty} ≈ ${formatDzd(dzd)}`;
   } catch {
     return "";
@@ -415,7 +421,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
     await ctx.reply(t(ctx.session.lang, "cancelled"));
   });
 
-  // Main message handler: conversation steps first, then 1688 links
+  // Main message handler: conversation steps first, then product links
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
     const lang = ctx.session.lang;
@@ -539,33 +545,44 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             await ctx.reply("❌ تعذر تحديد هويتك. أرسل /start وحاول مجدداً.");
             return;
           }
-          let cny: number;
-          try {
-            cny = (await getCnyPerUsd()).rate;
-          } catch (fxErr) {
-            console.error("FX unavailable at order time:", fxErr);
-            ctx.session.step = "idle";
-            await ctx.reply(
-              "❌ تعذر حساب السعر حالياً (سعر الصرف غير متوفر). حاول مجدداً بعد قليل.",
-            );
-            return;
+          // Alibaba needs no CNY leg; 1688 does (cached live rate).
+          let cny = 1;
+          if (pending.currency !== "USD") {
+            try {
+              cny = (await getCnyPerUsd()).rate;
+            } catch (fxErr) {
+              console.error("FX unavailable at order time:", fxErr);
+              ctx.session.step = "idle";
+              await ctx.reply(
+                "❌ تعذر حساب السعر حالياً (سعر الصرف غير متوفر). حاول مجدداً بعد قليل.",
+              );
+              return;
+            }
           }
           const usdRate = getUsdRate();
           const freightPerKg = getFreightPerKg();
           const qty = ctx.session.draftQuantity;
-          // Unit price: ladder tier for this qty and matched-SKU price vote;
-          // take the higher (never undercharge), but discard any signal that
-          // is absurd next to the scraped price (e.g. cent-vs-yuan mixups).
-          const tier = tierPriceFor(pending.tiers, qty);
-          const ref = tier ?? pending.priceRmb;
-          let sku = maxSkuPrice(pending.skus, ctx.session.draftPicks);
-          if (sku !== null && (sku < ref * 0.1 || sku > ref * 10)) {
-            console.warn(
-              `Discarding implausible SKU price ${sku} vs ref ${ref}`,
-            );
-            sku = null;
+          // Source-currency unit actually charged. 1688: ladder tier for
+          // this qty and matched-SKU price vote (take the higher, discard
+          // absurd signals). Alibaba: USD ladder only (no variants in v1).
+          let unitRmb: number;
+          let unitUsd: number;
+          if (pending.currency === "USD") {
+            unitRmb = tierPriceFor(pending.tiers, qty) ?? pending.priceRmb;
+            unitUsd = unitRmb;
+          } else {
+            const tier = tierPriceFor(pending.tiers, qty);
+            const ref = tier ?? pending.priceRmb;
+            let sku = maxSkuPrice(pending.skus, ctx.session.draftPicks);
+            if (sku !== null && (sku < ref * 0.1 || sku > ref * 10)) {
+              console.warn(
+                `Discarding implausible SKU price ${sku} vs ref ${ref}`,
+              );
+              sku = null;
+            }
+            unitRmb = Math.max(tier ?? 0, sku ?? 0, pending.priceRmb);
+            unitUsd = unitRmb / cny;
           }
-          const unitRmb = Math.max(tier ?? 0, sku ?? 0, pending.priceRmb);
           const quote = quotePrice({
             priceRmb: unitRmb,
             quantity: qty,
@@ -574,6 +591,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             usdRateDzd: usdRate,
             freightPerKgDzd: freightPerKg,
             benefitDzd: getBenefit(),
+            unitUsd,
           });
           const variantSummary = ctx.session.draftPicks
             .filter((p) => p.qty > 0)
@@ -590,10 +608,11 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
             productUrl: pending.url,
             titleRaw: pending.title,
             priceRmb: unitRmb,
+            currency: pending.currency,
             imageUrl: pending.imageUrl,
             variantSummary,
-            // Effective RMB→DZD rate actually charged (USD leg stays hidden).
-            fxRateRmbDzd: usdRate / cny,
+            // Effective source→DZD rate actually charged (legs stay hidden).
+            fxRateRmbDzd: pending.currency === "USD" ? usdRate : usdRate / cny,
             quantity: quote.quantity,
             weightKg: quote.weightKg,
             freightDzd: quote.freightDzd,
@@ -632,7 +651,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
               order.variantSummary
                 ? `🎨 النوع: ${translatePicks(picksForMsg, lang) || order.variantSummary}`
                 : null,
-              `💴 سعر القطعة: ${unitRmb} RMB ≈ ${formatDzd(quote.unitPriceDzd)}`,
+              `💴 سعر القطعة: ${sourcePriceLabel(unitRmb, pending.currency)} ≈ ${formatDzd(quote.unitPriceDzd)}`,
               `📦 مجموع المنتج (${quote.quantity}): ${formatDzd(quote.productTotalDzd)}`,
               shippingLine,
               `⏳ السعر النهائي وطريقة الدفع يحددهما المشرف لاحقاً`,
@@ -665,8 +684,8 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
           break;
       }
 
-      // --- Idle: expect a 1688 link ---
-      const productUrl = extract1688Url(text);
+      // --- Idle: expect a 1688 / Alibaba link ---
+      const productUrl = extractProductUrl(text);
       if (!productUrl) {
         // Only hint when the message looks like a link attempt or is short;
         // otherwise stay quiet to avoid spamming group chatter.
@@ -693,14 +712,16 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
       }
 
       // Preview unit for qty=1: ladder tier wins over the scraped lowest.
+      // Alibaba prices are already USD (no CNY leg); 1688 goes RMB→USD.
       const previewUnitRmb =
         tierPriceFor(scraped.tiers, 1) ?? scraped.priceRmb;
       let unitDzd: number;
       try {
-        const cny = await getCnyPerUsd();
-        unitDzd = Math.round(
-          (previewUnitRmb / cny.rate) * getUsdRate(),
-        );
+        const previewUsd =
+          scraped.currency === "USD"
+            ? previewUnitRmb
+            : previewUnitRmb / (await getCnyPerUsd()).rate;
+        unitDzd = Math.round(previewUsd * getUsdRate());
       } catch (fxErr) {
         console.warn("FX unavailable for preview:", fxErr);
         await ctx.reply(
@@ -713,6 +734,7 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         url: scraped.url,
         title: scraped.title,
         priceRmb: scraped.priceRmb,
+        currency: scraped.currency,
         imageUrl: scraped.imageUrl,
         moq: scraped.moq,
         unitDzd,

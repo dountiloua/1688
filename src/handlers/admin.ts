@@ -13,7 +13,7 @@ import {
   type OrderStatus,
 } from "../db.js";
 import { getCnyMode, getCnyPerUsd } from "../fx.js";
-import { formatDzd } from "../i18n.js";
+import { formatDzd, unitPriceLabel } from "../i18n.js";
 import { invoiceMessage } from "../invoice.js";
 import type { MyContext } from "../session.js";
 
@@ -117,7 +117,7 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
           `📍 ${o.wilaya} ${o.postalCode} — ${o.address}`,
           `🧾 ${o.titleRaw} ×${o.quantity || 1}`,
           o.variantSummary ? `🎨 ${o.variantSummary}` : null,
-          `💴 ${o.priceRmb} RMB / unit`,
+          `💴 ${unitPriceLabel(o.priceRmb, o.currency)} / unit`,
           o.weightKg > 0
             ? `⚖️ ${o.weightKg} kg → freight ${formatDzd(o.freightDzd)}`
             : `⚖️ Weight unknown → freight TBD`,

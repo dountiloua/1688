@@ -42,6 +42,11 @@ export interface PriceInput {
   freightPerKgDzd: number;
   /** Flat benefit added to the formula total (default 0 = formula only). */
   benefitDzd?: number;
+  /**
+   * Direct USD unit price (Alibaba products are already in USD).
+   * When set, the CNY leg is skipped entirely.
+   */
+  unitUsd?: number;
 }
 
 export interface PriceQuote {
@@ -66,7 +71,7 @@ export function quotePrice(input: PriceInput): PriceQuote {
   const quantity = Math.max(1, Math.floor(input.quantity));
   const weightKg = Math.max(0, input.weightKg);
   const benefitDzd = Math.max(0, Math.round(input.benefitDzd ?? 0));
-  const unitPriceUsd = input.priceRmb / input.cnyPerUsd;
+  const unitPriceUsd = input.unitUsd ?? input.priceRmb / input.cnyPerUsd;
   const unitPriceDzd = Math.round(unitPriceUsd * input.usdRateDzd);
   const productTotalDzd = unitPriceDzd * quantity;
   const freightDzd = Math.round(weightKg * input.freightPerKgDzd);

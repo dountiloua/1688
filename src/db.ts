@@ -41,6 +41,8 @@ export interface OrderRow {
   productUrl: string;
   titleRaw: string;
   priceRmb: number;
+  /** Source currency of priceRmb: CNY (1688) or USD (Alibaba). */
+  currency: string;
   imageUrl: string;
   variantSummary: string;
   fxRateRmbDzd: number;
@@ -70,6 +72,8 @@ export interface NewOrder {
   productUrl: string;
   titleRaw: string;
   priceRmb: number;
+  /** Source currency of priceRmb: CNY (1688) or USD (Alibaba). */
+  currency: string;
   imageUrl: string;
   variantSummary: string;
   fxRateRmbDzd: number;
@@ -197,6 +201,9 @@ function migrate(database: Database.Database): void {
   if (!hasCol("approxTotalDzd")) {
     database.exec("ALTER TABLE orders ADD COLUMN approxTotalDzd INTEGER NOT NULL DEFAULT 0");
   }
+  if (!hasCol("currency")) {
+    database.exec("ALTER TABLE orders ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'");
+  }
 }
 
 export function getSetting(key: string): string | null {
@@ -258,13 +265,13 @@ export function createOrder(input: NewOrder): OrderRow {
   const stmt = database.prepare(`
     INSERT INTO orders (
       telegramUserId, fullName, phone, wilaya, postalCode, address,
-      productUrl, titleRaw, priceRmb, imageUrl, variantSummary, fxRateRmbDzd,
+      productUrl, titleRaw, priceRmb, currency, imageUrl, variantSummary, fxRateRmbDzd,
       quantity, weightKg, freightDzd, cnyPerUsd, usdRateDzd,
       approxTotalDzd, totalAmountDzd, depositAmountDzd, remainingBalanceDzd,
       shippingMark, status
     ) VALUES (
       @telegramUserId, @fullName, @phone, @wilaya, @postalCode, @address,
-      @productUrl, @titleRaw, @priceRmb, @imageUrl, @variantSummary, @fxRateRmbDzd,
+      @productUrl, @titleRaw, @priceRmb, @currency, @imageUrl, @variantSummary, @fxRateRmbDzd,
       @quantity, @weightKg, @freightDzd, @cnyPerUsd, @usdRateDzd,
       @approxTotalDzd, @totalAmountDzd, @depositAmountDzd, @remainingBalanceDzd,
       '', @status
