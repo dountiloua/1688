@@ -16,6 +16,7 @@ import {
   deleteOrder,
   getBenefit,
   getFreightPerKg,
+  getMinOrder,
   getOrderById,
   getUsdRate,
   isValidStatus,
@@ -249,6 +250,7 @@ function dashboardPage(opts: {
   usdRate: number;
   freightPerKg: number;
   benefit: number;
+  minOrder: number;
   cny: CnyRate | null;
   cnyMode: string;
   activeStatus: string;
@@ -256,7 +258,7 @@ function dashboardPage(opts: {
   deleteTarget: OrderRow | null;
   notice: string;
 }): string {
-  const { token, orders, pending, counts, usdRate, freightPerKg, benefit, cny, cnyMode, activeStatus, view, deleteTarget, notice } =
+  const { token, orders, pending, counts, usdRate, freightPerKg, benefit, minOrder, cny, cnyMode, activeStatus, view, deleteTarget, notice } =
     opts;
   const totalOrders = Object.values(counts).reduce((a, b) => a + b, 0);
 
@@ -317,6 +319,7 @@ function dashboardPage(opts: {
           <label>CNY→USD ("auto" or fixed)<input name="cny" value="${cnyMode === "manual" ? esc(String(cny?.rate ?? "")) : "auto"}" inputmode="text" /></label>
           <label>Freight (DZD / kg)<input name="freight_kg" value="${freightPerKg}" inputmode="numeric" /></label>
           <label>Benefit flat (DZD)<input name="benefit" value="${benefit}" inputmode="numeric" /></label>
+          <label>Min order (DZD)<input name="min_order" value="${minOrder}" inputmode="numeric" /></label>
           <button type="submit">Save (new orders only)</button>
         </div>
       </form>
@@ -529,6 +532,11 @@ async function handle(
       setSetting("benefit_dzd", String(Math.round(benefit)));
       msgs.push(`benefit → ${formatDzd(benefit)}`);
     }
+    const minOrder = Number(body.get("min_order"));
+    if (Number.isFinite(minOrder) && minOrder >= 0 && minOrder <= 10000000) {
+      setSetting("min_order_dzd", String(Math.round(minOrder)));
+      msgs.push(`min order → ${formatDzd(minOrder)}`);
+    }
     redirect(res, token, msgs.length > 0 ? msgs.join(" • ") + " (new orders only)." : "No valid values — nothing changed.");
     return;
   }
@@ -574,6 +582,7 @@ async function handle(
         usdRate: getUsdRate(),
         freightPerKg: getFreightPerKg(),
         benefit: getBenefit(),
+        minOrder: getMinOrder(),
         cny,
         cnyMode: getCnyMode(),
         activeStatus,

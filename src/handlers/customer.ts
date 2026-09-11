@@ -3,6 +3,7 @@ import {
   createOrder,
   getBenefit,
   getFreightPerKg,
+  getMinOrder,
   getUsdRate,
   listOrdersByUser,
 } from "../db.js";
@@ -18,7 +19,7 @@ import {
   scrape1688Product,
 } from "../scraper/index.js";
 import type { SourceCurrency } from "../scraper/oneSixEightEight.js";
-import { quotePrice } from "../pricing.js";
+import { minQtyForAmount, quotePrice } from "../pricing.js";
 import type { Lang, MyContext, PendingProduct } from "../session.js";
 
 const URL_RE = /https?:\/\/[^\s]+/gi;
@@ -161,9 +162,19 @@ async function refreshAllocMessage(
 
 function askQuantityText(ctx: MyContext): string {
   let q = t(ctx.session.lang, "askQuantity");
-  const moq = ctx.session.pending?.moq ?? null;
+  const pending = ctx.session.pending;
+  const moq = pending?.moq ?? null;
   if (moq !== null && moq > 1) {
     q += `\n📦 أقل كمية للطلب (MOQ): ${moq}`;
+  }
+  // Minimum order value (default 3000 DZD) translated into pieces.
+  const minFor = minQtyForAmount(pending?.unitDzd ?? 0, getMinOrder());
+  if (minFor > 1) {
+    q +=
+      `\n` +
+      t(ctx.session.lang, "minOrderHint")
+        .replace("{Q}", String(minFor))
+        .replace("{TOTAL}", formatDzd(minFor * (pending?.unitDzd ?? 0)));
   }
   return q;
 }
@@ -469,7 +480,12 @@ export function registerCustomerHandlers(bot: Bot<MyContext>): void {
         case "awaiting_quantity": {
           const qty = Math.floor(Number(text.replace(/,/g, "")));
           const moq = ctx.session.pending?.moq ?? null;
-          const minQty = moq !== null && moq > 1 ? moq : 1;
+          const moqMin = moq !== null && moq > 1 ? moq : 1;
+          const minFor = minQtyForAmount(
+            ctx.session.pending?.unitDzd ?? 0,
+            getMinOrder(),
+          );
+          const minQty = Math.max(moqMin, minFor);
           if (!Number.isFinite(qty) || qty < minQty || qty > 1000000) {
             let msg = t(lang, "askQuantityInvalid");
             if (minQty > 1) msg += ` (أقل كمية: ${minQty})`;

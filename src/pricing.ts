@@ -16,6 +16,8 @@ export const DEFAULT_USD_RATE_DZD = 255;
 export const DEFAULT_FREIGHT_PER_KG_DZD = 5000;
 /** Flat admin benefit added on top of the formula (shown inside the approximate price). */
 export const DEFAULT_BENEFIT_DZD = 2000;
+/** Minimum order total in DZD (enforced via minimum quantity). */
+export const DEFAULT_MIN_ORDER_DZD = 3000;
 
 /**
  * Parcel-weight rounding for freight (admin side).
@@ -65,6 +67,16 @@ export interface PriceQuote {
   cnyPerUsd: number;
   usdRateDzd: number;
   freightPerKgDzd: number;
+}
+
+/**
+ * Minimum quantity so the PRODUCT subtotal (unit × qty, before freight and
+ * benefit) reaches minTotalDzd. E.g. 200 DZD/unit + 3000 min → 15 pieces.
+ */
+export function minQtyForAmount(unitDzd: number, minTotalDzd: number): number {
+  if (!Number.isFinite(unitDzd) || unitDzd <= 0) return 1;
+  if (!Number.isFinite(minTotalDzd) || minTotalDzd <= 0) return 1;
+  return Math.max(1, Math.ceil(minTotalDzd / unitDzd));
 }
 
 export function quotePrice(input: PriceInput): PriceQuote {

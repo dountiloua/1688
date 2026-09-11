@@ -53,6 +53,8 @@ npm run dev
 | `OXYLABS_USERNAME` / `OXYLABS_PASSWORD` | — | — | Oxylabs Realtime API creds |
 | `USD_RATE_DZD` | — | `255` | Default DZD per 1 USD (DB settings win) |
 | `FREIGHT_PER_KG_DZD` | — | `5000` | Default freight DZD per kg (DB settings win) |
+| `BENEFIT_DZD` | — | `2000` | Flat benefit per order (DB settings win) |
+| `MIN_ORDER_DZD` | — | `3000` | Minimum order subtotal, enforced via min quantity |
 
 ### 4. Deploy on Railway
 
@@ -85,6 +87,7 @@ Admin (`ADMIN_TELEGRAM_ID` only):
 - `/setcny auto|<rate>` — CNY→USD: live auto rate (free API, cached 12h) or fixed manual rate
 - `/setfreightkg <amount>` — freight DZD per kg for new orders (default 5000)
 - `/setbenefit <amount>` — flat benefit per order for new orders (default 2000)
+- `/setmin <amount>` — minimum order subtotal for new orders (default 3000; bot auto-requires enough pieces)
 - `/pending` — orders waiting for acceptance
 - `/accept <id> <final_price>` — lock final price, move to AWAITING_DEPOSIT, DM the invoice
 - `/rates` — show current pricing inputs

@@ -6,6 +6,7 @@ import {
   DEFAULT_FREIGHT_ESTIMATE_DZD,
   DEFAULT_FREIGHT_PER_KG_DZD,
   DEFAULT_FX_RATE_RMB_DZD,
+  DEFAULT_MIN_ORDER_DZD,
   DEFAULT_USD_RATE_DZD,
   MINIMUM_DEPOSIT_DZD,
   roundWeightKg,
@@ -168,6 +169,9 @@ function migrate(database: Database.Database): void {
   if (!getSetting.get("benefit_dzd")) {
     setSetting.run("benefit_dzd", String(DEFAULT_BENEFIT_DZD));
   }
+  if (!getSetting.get("min_order_dzd")) {
+    setSetting.run("min_order_dzd", String(DEFAULT_MIN_ORDER_DZD));
+  }
 
   // Order columns for quantity / weight-based freight (added after v1)
   const cols = database
@@ -232,6 +236,13 @@ export function getBenefit(): number {
   const raw = getSetting("benefit_dzd");
   const n = raw ? Number(raw) : NaN;
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : DEFAULT_BENEFIT_DZD;
+}
+
+/** Minimum order product-subtotal in DZD (default 3000). New orders only. */
+export function getMinOrder(): number {
+  const raw = getSetting("min_order_dzd");
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : DEFAULT_MIN_ORDER_DZD;
 }
 
 /** DZD per 1 USD (default 255). Applies to new orders only. */

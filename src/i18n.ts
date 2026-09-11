@@ -53,6 +53,11 @@ const STRINGS: Dict = {
     fr: "❌ Envoyez un nombre valide (1 minimum).",
     en: "❌ Send a valid quantity number (at least 1).",
   },
+  minOrderHint: {
+    ar: "💰 الحد الأدنى للطلب: {Q} قطع (≈ {TOTAL})",
+    fr: "💰 Commande min : {Q} pièces (≈ {TOTAL})",
+    en: "💰 Minimum order: {Q} pcs (≈ {TOTAL})",
+  },
   askWeight: {
     ar: "⚖️ ما هو الوزن التقديري الإجمالي بالكيلوغرام؟\n🚚 الشحن ≈ {FREIGHT} دج لكل 1kg.\nإذا لا تعرف الوزن، أرسل 0 وسيؤكده المشرف لاحقاً.",
     fr: "⚖️ Quel est le poids total estimé en kg ?\n🚚 Livraison ≈ {FREIGHT} DZD par 1kg.\nSi vous ne savez pas, envoyez 0.",

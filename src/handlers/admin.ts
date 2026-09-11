@@ -3,6 +3,7 @@ import {
   acceptOrder,
   getBenefit,
   getFreightPerKg,
+  getMinOrder,
   getOrderById,
   getUsdRate,
   isValidStatus,
@@ -220,11 +221,33 @@ export function registerAdminHandlers(bot: Bot<MyContext>): void {
           `• USD→DZD: ${getUsdRate()}`,
           `• Freight: ${formatDzd(getFreightPerKg())} / kg`,
           `• Benefit: ${formatDzd(getBenefit())} flat`,
+          `• Min order: ${formatDzd(getMinOrder())}`,
         ].join("\n"),
       );
     } catch (err) {
       console.error("/rates failed:", err);
       await ctx.reply("❌ Could not load rates.");
+    }
+  });
+
+  bot.command("setmin", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const arg = ctx.message?.text.split(/\s+/)[1];
+    const amount = Number(arg);
+    if (!arg || !Number.isFinite(amount) || amount < 0 || amount > 10000000) {
+      await ctx.reply(
+        `Usage: /setmin <amount_dzd>\nCurrent: ${formatDzd(getMinOrder())} (new orders only).`,
+      );
+      return;
+    }
+    try {
+      setSetting("min_order_dzd", String(Math.round(amount)));
+      await ctx.reply(
+        `✅ Minimum order updated to ${formatDzd(amount)} for new orders.`,
+      );
+    } catch (err) {
+      console.error("/setmin failed:", err);
+      await ctx.reply("❌ Failed to update minimum order.");
     }
   });
 
